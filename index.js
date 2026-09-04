@@ -18,13 +18,17 @@ const db = new sqlite3.Database('./database.sqlite', (err) => {
     else console.log('SQLite Veritabanına bağlandı.');
 });
 
+// Veritabanı Tablolarına Asist Sütunları Eklendi
 db.serialize(() => {
     db.run(`CREATE TABLE IF NOT EXISTS players (
         user_id TEXT PRIMARY KEY,
         nickname TEXT,
         value INTEGER DEFAULT 1,
         team_id TEXT DEFAULT NULL,
-        position TEXT DEFAULT 'YOK'
+        position TEXT DEFAULT 'YOK',
+        ant_count INTEGER DEFAULT 0,
+        goals INTEGER DEFAULT 0,
+        assists INTEGER DEFAULT 0
     )`);
 
     db.run(`CREATE TABLE IF NOT EXISTS teams (
@@ -48,7 +52,6 @@ db.serialize(() => {
     )`);
 });
 
-// Oyuncunun Nickname Formatını Düzenleyen Yardımcı Fonksiyon
 async function updateServerNickname(guild, userId) {
     db.get(`SELECT * FROM players WHERE user_id = ?`, [userId], async (err, row) => {
         if (err || !row) return;
@@ -77,6 +80,145 @@ async function updateServerNickname(guild, userId) {
     });
 }
 
+// 90 Dakikalık Canlı Maç Simülasyon Fonksiyonu
+async function runLiveMatch(message, team1Role, team2Role, isOfficial = true) {
+    return new Promise((resolve) => {
+        db.all(`SELECT * FROM players WHERE team_id IN (?, ?)`, [team1Role.id, team2Role.id], async (err, players) => {
+            if (err) {
+                message.reply('Veritabanı hatası.');
+                return resolve(null);
+            }
+
+            const team1Players = players.filter(p => p.team_id === team1Role.id);
+            const team2Players = players.filter(p => p.team_id === team2Role.id);
+
+            const val1 = team1Players.reduce((acc, p) => acc + p.value, 0);
+            const val2 = team2Players.reduce((acc, p) => acc + p.value, 0);
+
+            let score1 = 0;
+            let score2 = 0;
+            let currentPossession = (val1 >= val2) ? team1Role : team2Role;
+            let currentDistance = 50; // Başlangıçta santra (50 metre)
+            let lastPasser = null;
+            let currentCarrier = null;
+
+            let matchLog = [];
+            let scorers = [];
+
+            const getRandomPlayer = (tPlayers) => {
+                if (!tPlayers || tPlayers.length === 0) return { nickname: 'Açık Oyuncu', user_id: null };
+                return tPlayers[Math.floor(Math.random() * tPlayers.length)];
+            };
+
+            const embed = new EmbedBuilder()
+                .setTitle(`🏟️ CANLI MAÇ: ${team1Role.name} vs ${team2Role.name}`)
+                .setColor('#2b2d31')
+                .setDescription('Maç hakemin düdüğüyle başlamak üzere...')
+                .setTimestamp();
+
+            const matchMsg = await message.channel.send({ embeds: [embed] });
+
+            let minute = 1;
+
+            const interval = setInterval(async () => {
+                if (minute > 90) {
+                    clearInterval(interval);
+
+                    const finalEmbed = new EmbedBuilder()
+                        .setTitle(`🏁 MAÇ BİTTİ | ${team1Role.name} ${score1} - ${score2} ${team2Role.name}`)
+                        .setColor('#00ff00')
+                        .addFields(
+                            { name: '📊 Kadro Değerleri', value: `**${team1Role.name}:** ${val1}M\n**${team2Role.name}:** ${val2}M` },
+                            { name: '⚽ Goller ve Asistler', value: scorers.length > 0 ? scorers.join('\n') : 'Gol olmadı.' }
+                        )
+                        .setFooter({ text: isOfficial ? 'Resmi Lig Maçı İşlendi' : 'Hazırlık Maçı' })
+                        .setTimestamp();
+
+                    await matchMsg.edit({ embeds: [finalEmbed] });
+                    return resolve({ score1, score2, team1Players, team2Players });
+                }
+
+                const currentTeamPlayers = (currentPossession.id === team1Role.id) ? team1Players : team2Players;
+                
+                // Oyuncu değiştir veya topu koru
+                if (!currentCarrier || Math.random() < 0.4) {
+                    lastPasser = currentCarrier;
+                    currentCarrier = getRandomPlayer(currentTeamPlayers);
+                }
+
+                let actionText = '';
+
+                // Hücum / Top Kaybı Mantığı
+                const teamVal = (currentPossession.id === team1Role.id) ? val1 : val2;
+                const oppVal = (currentPossession.id === team1Role.id) ? val2 : val1;
+                const attackSuccessChance = 0.5 + ((teamVal - oppVal) * 0.01);
+
+                if (Math.random() < attackSuccessChance) {
+                    // İlerleme
+                    currentDistance -= Math.floor(Math.random() * 12) + 5;
+                    if (currentDistance < 8) currentDistance = 8;
+                    actionText = `🏃 **${currentCarrier.nickname}** topu ileriye taşıyor! Kaleye mesafe: **${currentDistance}m**`;
+                } else {
+                    // Top Kaybı
+                    currentPossession = (currentPossession.id === team1Role.id) ? team2Role : team1Role;
+                    currentDistance = 60 - currentDistance;
+                    if (currentDistance < 20) currentDistance = 35;
+                    currentCarrier = getRandomPlayer((currentPossession.id === team1Role.id) ? team1Players : team2Players);
+                    lastPasser = null;
+                    actionText = `❌ Savunma araya girdi! Top **${currentPossession.name}** takımına geçti.`;
+                }
+
+                // Şut ve Gol İhtimali (Mesafe kısaldıkça ihtimal artar)
+                if (currentDistance <= 25 && Math.random() < (0.80 - (currentDistance * 0.025))) {
+                    const isGoal = Math.random() < (0.75 - (currentDistance * 0.02));
+                    
+                    if (isGoal) {
+                        if (currentPossession.id === team1Role.id) score1++;
+                        else score2++;
+
+                        let scorerMention = currentCarrier.user_id ? `<@${currentCarrier.user_id}>` : currentCarrier.nickname;
+                        let assistText = '';
+
+                        if (lastPasser && lastPasser.user_id && lastPasser.user_id !== currentCarrier.user_id) {
+                            assistText = ` (Asist: <@${lastPasser.user_id}>)`;
+                            db.run(`UPDATE players SET assists = assists + 1 WHERE user_id = ?`, [lastPasser.user_id]);
+                        }
+
+                        if (currentCarrier.user_id) {
+                            db.run(`UPDATE players SET goals = goals + 1 WHERE user_id = ?`, [currentCarrier.user_id]);
+                        }
+
+                        actionText = `⚽ **GOOOOL!** **${currentCarrier.nickname}** **${currentDistance}m** mesafeden harika vurdu ve topu ağlara gönderdi!${assistText}`;
+                        scorers.push(`⏱️ ${minute}' **${currentCarrier.nickname}**${lastPasser ? ' (' + lastPasser.nickname + ')' : ''}`);
+
+                        // Santra
+                        currentPossession = (currentPossession.id === team1Role.id) ? team2Role : team1Role;
+                        currentDistance = 50;
+                        currentCarrier = null;
+                        lastPasser = null;
+                    } else {
+                        actionText = `💥 **${currentCarrier.nickname}** **${currentDistance}m** mesafeden sert vurdu! Top az farkla dışarı gitti!`;
+                        currentDistance = 45;
+                    }
+                }
+
+                matchLog.unshift(`**[${minute}']** ${actionText}`);
+                if (matchLog.length > 5) matchLog.pop();
+
+                const liveEmbed = new EmbedBuilder()
+                    .setTitle(`🏟️ ${team1Role.name} ${score1} - ${score2} ${team2Role.name}`)
+                    .setColor('#f1c40f')
+                    .setDescription(`⏱️ **Dakika:** ${minute}'\n📍 **Topun Olduğu Takım:** ${currentPossession}\n👤 **Toptaki Oyuncu:** ${currentCarrier ? currentCarrier.nickname : 'Mücadele Var'}\n📏 **Kaleye Mesafe:** ${currentDistance} Metre\n\n**Olay Akışı:**\n${matchLog.join('\n')}`)
+                    .setFooter({ text: 'Canlı Maç Simülasyonu Devam Ediyor...' });
+
+                await matchMsg.edit({ embeds: [liveEmbed] }).catch(() => {});
+
+                minute += Math.floor(Math.random() * 4) + 2; // Dakikaları 2-5'er hızlandırarak 90'a tamamlar
+            }, 1800);
+        });
+    });
+}
+
 client.on('ready', () => {
     console.log(`Bot ${client.user.tag} olarak aktif!`);
 });
@@ -96,19 +238,38 @@ client.on('messageCreate', async (message) => {
             .addFields(
                 { name: '📋 Kayıt', value: '`.k @oyuncu TakmaAd`\n`.kayıtsızver @oyuncu`' },
                 { name: '💰 Değer', value: '`.dver @oyuncu miktar`\n`.dsil @oyuncu miktar`' },
-                { name: '🏋️ Antrenman', value: '`.ant` / `.antrenman`' },
-                { name: '🥅 Penaltı', value: '`.pen` / `.penaltı`' },
-                { name: '🔍 Oyuncu', value: '`.ara isim`' },
+                { name: '🏋️ Antrenman', value: '`.ant` / `.antrenman` (5/5 olunca +5M değer)' },
+                { name: '🥅 Penaltı', value: '`.pen` / `.penaltı` (Gol olunca +3M değer)' },
+                { name: '🔍 Oyuncu & Krallık', value: '`.ara isim`\n`.krallık`' },
                 { name: '🏟️ Takım', value: '`.takımekle @takım`\n`.kadroekle @takım @oyuncu pozisyon`\n`.kadroçıkar @takım @oyuncu`\n`.kadro @takım`' },
                 { name: '📐 Formasyon', value: '`.formasyon @takım [diziliş]`' },
                 { name: '📅 Fikstür', value: '`.fikstürekle @takım1 @takım2 GG.AA.YYYY SS:DD`\n`.fikstür`' },
-                { name: '📊 Puan & Maç', value: '`.puan`\n`.puanekle @takım miktar`\n`.maç @takım1 @takım2`\n`.hazırlıkmaçı @takım1 @takım2`' },
+                { name: '📊 Puan & Canlı Maç', value: '`.puan`\n`.puanekle @takım miktar`\n`.maç @takım1 @takım2`\n`.hazırlıkmaçı @takım1 @takım2`' },
                 { name: '🐦 Tweet', value: '`.tweet mesaj`' }
             )
             .setFooter({ text: message.guild ? message.guild.name : 'Lig Botu' })
             .setTimestamp();
 
         return message.channel.send({ embeds: [embed] });
+    }
+
+    // ---------------- GOL & ASİST KRALLIĞI (.krallık) ----------------
+    if (command === 'krallık' || command === 'krallik') {
+        db.all(`SELECT * FROM players ORDER BY goals DESC, assists DESC LIMIT 10`, [], (err, rows) => {
+            if (err) return message.reply('Hata oluştu.');
+
+            const embed = new EmbedBuilder()
+                .setTitle(`🏆 ${serverName} • GOL VE ASİST KRALLIĞI`)
+                .setColor('#ffd700');
+
+            if (!rows || rows.length === 0) {
+                embed.setDescription('Henüz gol veya asist kaydedilmemiş.');
+            } else {
+                let text = rows.map((p, i) => `${i + 1}. <@${p.user_id}> — ⚽ **${p.goals || 0} Gol** | 🅰️ **${p.assists || 0} Asist**`).join('\n');
+                embed.setDescription(text);
+            }
+            message.channel.send({ embeds: [embed] });
+        });
     }
 
     // ---------------- OYUNCU KAYIT (.k) ----------------
@@ -121,7 +282,7 @@ client.on('messageCreate', async (message) => {
 
         let cleanName = rawName.split('|')[0].trim();
 
-        db.run(`INSERT INTO players (user_id, nickname, value) VALUES (?, ?, 1) 
+        db.run(`INSERT INTO players (user_id, nickname, value, ant_count, goals, assists) VALUES (?, ?, 1, 0, 0, 0) 
                 ON CONFLICT(user_id) DO UPDATE SET nickname = ?`, 
                 [member.id, cleanName, cleanName], async (err) => {
             if (err) return message.reply('Veritabanı hatası oluştu.');
@@ -157,7 +318,7 @@ client.on('messageCreate', async (message) => {
         const member = message.mentions.members.first();
         if (!member) return message.reply('❌ Kullanım: `.kayıtsızver @oyuncu`');
 
-        db.run(`UPDATE players SET team_id = NULL, position = 'YOK', value = 0 WHERE user_id = ?`, [member.id], async (err) => {
+        db.run(`UPDATE players SET team_id = NULL, position = 'YOK', value = 0, ant_count = 0 WHERE user_id = ?`, [member.id], async (err) => {
             if (err) return message.reply('Hata oluştu.');
             
             try { await member.setNickname(null); } catch (e) {}
@@ -223,6 +384,8 @@ client.on('messageCreate', async (message) => {
                     { name: 'Oyuncu', value: `<@${row.user_id}>` },
                     { name: 'Takma Ad', value: `${row.nickname} | ${row.position} | ${row.value}M` },
                     { name: 'Değer', value: `${row.value}M` },
+                    { name: 'İstatistik', value: `⚽ ${row.goals || 0} Gol | 🅰️ ${row.assists || 0} Asist` },
+                    { name: 'Antrenman', value: `${row.ant_count || 0}/5` },
                     { name: 'Durum', value: row.team_id ? '🔴 DOLU' : '🟢 BOŞ' }
                 );
             }
@@ -256,8 +419,9 @@ client.on('messageCreate', async (message) => {
             if (!rows || rows.length === 0) {
                 embed.setDescription('Bu takımda kayıtlı oyuncu bulunamadı.');
             } else {
-                let kadroMetni = rows.map(p => `<@${p.user_id}> - **Pozisyon:** ${p.position} - **Değer:** ${p.value}M`).join('\n');
-                embed.setDescription(kadroMetni);
+                let totalVal = rows.reduce((acc, p) => acc + p.value, 0);
+                let kadroMetni = rows.map(p => `<@${p.user_id}> - **Pozisyon:** ${p.position} - **Değer:** ${p.value}M - ⚽ ${p.goals || 0}G / 🅰️ ${p.assists || 0}A`).join('\n');
+                embed.setDescription(`💰 **Kadro Değeri:** ${totalVal}M\n\n` + kadroMetni);
             }
 
             message.channel.send({ embeds: [embed] });
@@ -314,7 +478,7 @@ client.on('messageCreate', async (message) => {
         });
     }
 
-    // ---------------- RESMİ LİG MAÇI (.maç) ----------------
+    // ---------------- CANLI RESMİ LİG MAÇI (.maç) ----------------
     if (command === 'maç' || command === 'mac') {
         const roles = message.mentions.roles.first(2);
         if (roles.length < 2) return message.reply('❌ Kullanım: `.maç @takım1 @takım2`');
@@ -322,49 +486,30 @@ client.on('messageCreate', async (message) => {
         const team1 = roles[0];
         const team2 = roles[1];
 
-        const score1 = Math.floor(Math.random() * 5);
-        const score2 = Math.floor(Math.random() * 5);
+        const result = await runLiveMatch(message, team1, team2, true);
 
-        let p1 = 0, p2 = 0, w1 = 0, w2 = 0, d1 = 0, d2 = 0, l1 = 0, l2 = 0;
+        if (result) {
+            const { score1, score2 } = result;
+            let p1 = 0, p2 = 0, w1 = 0, w2 = 0, d1 = 0, d2 = 0, l1 = 0, l2 = 0;
 
-        if (score1 > score2) { p1 = 3; w1 = 1; l2 = 1; }
-        else if (score2 > score1) { p2 = 3; w2 = 1; l1 = 1; }
-        else { p1 = 1; p2 = 1; d1 = 1; d2 = 1; }
+            if (score1 > score2) { p1 = 3; w1 = 1; l2 = 1; }
+            else if (score2 > score1) { p2 = 3; w2 = 1; l1 = 1; }
+            else { p1 = 1; p2 = 1; d1 = 1; d2 = 1; }
 
-        db.run(`UPDATE teams SET played = played + 1, points = points + ?, won = won + ?, drawn = drawn + ?, lost = lost + ?, gf = gf + ?, ga = ga + ? WHERE role_id = ?`,
-            [p1, w1, d1, l1, score1, score2, team1.id]);
+            db.run(`UPDATE teams SET played = played + 1, points = points + ?, won = won + ?, drawn = drawn + ?, lost = lost + ?, gf = gf + ?, ga = ga + ? WHERE role_id = ?`,
+                [p1, w1, d1, l1, score1, score2, team1.id]);
 
-        db.run(`UPDATE teams SET played = played + 1, points = points + ?, won = won + ?, drawn = drawn + ?, lost = lost + ?, gf = gf + ?, ga = ga + ? WHERE role_id = ?`,
-            [p2, w2, d2, l2, score2, score1, team2.id]);
-
-        const embed = new EmbedBuilder()
-            .setTitle('⚽ LİG MAÇI SONUCU')
-            .setColor('#2b2d31')
-            .setDescription(`**<@&${team1.id}> ${score1} - ${score2} <@&${team2.id}>**\n\n✅ Maç sonucu puan durumuna işlendi!`)
-            .setTimestamp();
-
-        message.channel.send({ embeds: [embed] });
+            db.run(`UPDATE teams SET played = played + 1, points = points + ?, won = won + ?, drawn = drawn + ?, lost = lost + ?, gf = gf + ?, ga = ga + ? WHERE role_id = ?`,
+                [p2, w2, d2, l2, score2, score1, team2.id]);
+        }
     }
 
-    // ---------------- HAZIRLIK MAÇI (.hazırlıkmaçı / .hm) ----------------
+    // ---------------- CANLI HAZIRLIK MAÇI (.hazırlıkmaçı / .hm) ----------------
     if (command === 'hazırlıkmaçı' || command === 'hazırlıkmaci' || command === 'hm') {
         const roles = message.mentions.roles.first(2);
         if (roles.length < 2) return message.reply('❌ Kullanım: `.hazırlıkmaçı @takım1 @takım2`');
 
-        const team1 = roles[0];
-        const team2 = roles[1];
-
-        // Rastgele Skor
-        const score1 = Math.floor(Math.random() * 5);
-        const score2 = Math.floor(Math.random() * 5);
-
-        const embed = new EmbedBuilder()
-            .setTitle('🤝 HAZIRLIK MAÇI SONUCU')
-            .setColor('#f1c40f')
-            .setDescription(`**<@&${team1.id}> ${score1} - ${score2} <@&${team2.id}>**\n\nℹ️ *Bu maç dostluk maçı olduğu için puan tablosuna **yansıtılmamıştır**.*`)
-            .setTimestamp();
-
-        message.channel.send({ embeds: [embed] });
+        await runLiveMatch(message, roles[0], roles[1], false);
     }
 
     // ---------------- PUAN EKLENME (.puanekle) ----------------
@@ -433,13 +578,50 @@ client.on('messageCreate', async (message) => {
 
     // ---------------- MİNİ OYUNLAR (.ant / .pen) ----------------
     if (command === 'ant' || command === 'antrenman') {
-        message.reply('🏋️ Antrenman başarıyla tamamlandı! Oyuncu kondisyon topladı.');
+        const userId = message.author.id;
+
+        db.get(`SELECT * FROM players WHERE user_id = ?`, [userId], (err, row) => {
+            if (err) return message.reply('Hata oluştu.');
+            if (!row) return message.reply('❌ Antrenman yapabilmek için önce kayıtlı olmalısın! (`.k TakmaAd`)');
+
+            let currentCount = (row.ant_count || 0) + 1;
+
+            if (currentCount >= 5) {
+                db.run(`UPDATE players SET value = value + 5, ant_count = 0 WHERE user_id = ?`, [userId], async (err) => {
+                    if (err) return message.reply('Hata oluştu.');
+                    await updateServerNickname(message.guild, userId);
+                    message.reply(`🏋️ **Tebrikler!** 5/5 antrenmanı tamamladın! **+5M** değer kazandın! 🔥`);
+                });
+            } else {
+                db.run(`UPDATE players SET ant_count = ? WHERE user_id = ?`, [currentCount, userId], (err) => {
+                    if (err) return message.reply('Hata oluştu.');
+                    message.reply(`🏋️ Antrenman tamamlandı! **[${currentCount}/5]** (5/5 olduğunda +5M değer kazanacaksın)`);
+                });
+            }
+        });
     }
 
     if (command === 'pen' || command === 'penaltı') {
-        const golMu = Math.random() < 0.5;
-        message.reply(golMu ? '⚽ **GOL!** Penaltı ağlarla buluştu!' : '❌ **KAÇTI!** Kaleci topu çıkardı.');
+        const userId = message.author.id;
+
+        db.get(`SELECT * FROM players WHERE user_id = ?`, [userId], (err, row) => {
+            if (err) return message.reply('Hata oluştu.');
+            if (!row) return message.reply('❌ Penaltı atabilmek için önce kayıtlı olmalısın! (`.k TakmaAd`)');
+
+            const golMu = Math.random() < 0.5;
+
+            if (golMu) {
+                db.run(`UPDATE players SET value = value + 3, goals = goals + 1 WHERE user_id = ?`, [userId], async (err) => {
+                    if (err) return message.reply('Hata oluştu.');
+                    await updateServerNickname(message.guild, userId);
+                    message.reply('⚽ **GOL!** Harika bir vuruş! Değerine **+3M** eklendi! 🎉');
+                });
+            } else {
+                message.reply('❌ **KAÇTI!** Kaleci harika uzandı, top kornere çıktı!');
+            }
+        });
     }
 });
 
 client.login(TOKEN);
+
