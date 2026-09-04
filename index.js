@@ -53,11 +53,12 @@ client.on('messageCreate', async (message) => {
 
     const args = message.content.slice(PREFIX.length).trim().split(/ +/);
     const command = args.shift().toLowerCase();
+    const serverName = message.guild ? message.guild.name.toUpperCase() : 'LİG';
 
     // ---------------- YARDIM KOMUTU ----------------
     if (command === 'yardım') {
         const embed = new EmbedBuilder()
-            .setTitle('⚽ AXERA LEAGUE • KOMUTLAR')
+            .setTitle(`⚽ ${serverName} • KOMUTLAR`)
             .setColor('#2b2d31')
             .addFields(
                 { name: '📋 Kayıt', value: '`.k @oyuncu TakmaAd`\n`.kayıtsızver @oyuncu`' },
@@ -65,14 +66,14 @@ client.on('messageCreate', async (message) => {
                 { name: '🏋️ Antrenman', value: '`.ant` / `.antrenman`' },
                 { name: '🥅 Penaltı', value: '`.pen` / `.penaltı`' },
                 { name: '🔍 Oyuncu', value: '`.ara isim`' },
-                { name: '🏟️ Takım', value: '`.takımekle @takım`\n`.takımdeğer @takım`\n`.kadrockle @takım @oyuncu pozisyon`\n`.kadroçıkar @takım @oyuncu`\n`.kadro @takım`' },
+                { name: '🏟️ Takım', value: '`.takımekle @takım`\n`.takımdeğer @takım`\n`.kadroekle @takım @oyuncu pozisyon`\n`.kadroçıkar @takım @oyuncu`\n`.kadro @takım`' },
                 { name: '📐 Formasyon', value: '`.formasyon @takım`' },
                 { name: '📅 Fikstür', value: '`.fikstürekle @takım1 @takım2 GG.AA.YYYY SS:DD`\n`.fikstür`' },
                 { name: '📊 Puan', value: '`.puan`\n`.puanekle @takım miktar`' },
                 { name: '⚽ Maç', value: '`.maç @takım1 @takım2`' },
                 { name: '🐦 Tweet', value: '`.tweet mesaj`' }
             )
-            .setFooter({ text: 'Axera League' })
+            .setFooter({ text: message.guild ? message.guild.name : 'Lig Botu' })
             .setTimestamp();
 
         return message.channel.send({ embeds: [embed] });
@@ -90,9 +91,9 @@ client.on('messageCreate', async (message) => {
         db.run(`INSERT INTO players (user_id, nickname) VALUES (?, ?) 
                 ON CONFLICT(user_id) DO UPDATE SET nickname = ?`, 
                 [member.id, nickname, nickname], (err) => {
-            if (err) return message.reply('Hata oluştu.');
+            if (err) return message.reply('Veritabanı hatası oluştu.');
             try { member.setNickname(nickname); } catch(e) {}
-            message.channel.send(`✅ ${member} kullanıcısının takma adı **${nickname}** olarak ayarlandı.`);
+            message.channel.send(`✅ ${member} kullanıcısının adı **${nickname}** olarak güncellendi.`);
         });
     }
 
@@ -104,10 +105,10 @@ client.on('messageCreate', async (message) => {
         db.get(`SELECT * FROM players WHERE nickname LIKE ?`, [`%${searchName}%`], (err, row) => {
             if (err) return console.error(err);
 
-            const embed = new EmbedBuilder().setTitle('🔍 OYUNCU ARAMA').setColor('#ffffff');
+            const embed = new EmbedBuilder().setTitle('🔍 OYUNCU ARAMA').setColor('#2b2d31');
 
             if (!row) {
-                embed.addFields({ name: '⚪ BOŞ', value: `${searchName} için uygun oyuncu bulunamadı.` });
+                embed.addFields({ name: '⚪ BOŞ', value: `**${searchName}** için uygun oyuncu bulunamadı.` });
             } else {
                 embed.addFields(
                     { name: 'Aranan', value: searchName },
@@ -128,7 +129,7 @@ client.on('messageCreate', async (message) => {
 
         db.run(`INSERT OR IGNORE INTO teams (role_id, name) VALUES (?, ?)`, [role.id, role.name], (err) => {
             if (err) return message.reply('Hata oluştu.');
-            message.channel.send(`✅ ${role.name} takımı lige eklendi.`);
+            message.channel.send(`✅ **${role.name}** takımı lige eklendi.`);
         });
     }
 
@@ -138,16 +139,15 @@ client.on('messageCreate', async (message) => {
             if (err) return console.error(err);
 
             const embed = new EmbedBuilder()
-                .setTitle('📊 AXERA LEAGUE • PUAN DURUMU')
-                .setDescription('Lig sıralaması\n\n🏆 **Sıralama**\n')
-                .setColor('#ffffff')
-                .setFooter({ text: 'Axera League • Puan Durumu' })
+                .setTitle(`📊 ${serverName} • PUAN DURUMU`)
+                .setColor('#2b2d31')
+                .setFooter({ text: `${message.guild ? message.guild.name : 'Lig'} • Puan Durumu` })
                 .setTimestamp();
 
             if (!rows || rows.length === 0) {
-                embed.setDescription('Henüz lige eklenmiş bir takım yok.');
+                embed.setDescription('Henüz lige eklenmiş bir takım bulunmuyor. `.takımekle @takım` komutu ile takım ekleyebilirsiniz.');
             } else {
-                let descriptionList = '';
+                let descriptionList = 'Lig sıralaması\n\n🏆 **Sıralama**\n\n';
                 const medals = ['🥇', '🥈', '🥉'];
 
                 rows.forEach((team, index) => {
@@ -180,8 +180,8 @@ client.on('messageCreate', async (message) => {
                 .setTitle(`🛡️ ${role.name.toUpperCase()} KADROSU`)
                 .setColor('#2b2d31');
 
-            if (rows.length === 0) {
-                embed.setDescription('Bu takımda henüz oyuncu bulunmuyor.');
+            if (!rows || rows.length === 0) {
+                embed.setDescription('Bu takımda kayıtlı oyuncu bulunamadı.');
             } else {
                 let kadroMetni = rows.map(p => `<@${p.user_id}> - **Pozisyon:** ${p.position} - **Değer:** ${p.value}`).join('\n');
                 embed.setDescription(kadroMetni);
@@ -191,18 +191,17 @@ client.on('messageCreate', async (message) => {
         });
     }
 
-    // ---------------- MAÇ YETKİSİ KONTROLÜ (.maç / .formasyon) ----------------
+    // ---------------- YETKİLİ KONTROLÜ (Örn: .maç / .formasyon) ----------------
     if (command === 'maç' || command === 'formasyon') {
-        const macYetkilisiRolIsmi = 'Maç Yetkilisi'; // Sunucundaki yetkili rol adı
-        const hasRole = message.member.roles.cache.some(r => r.name === macYetkilisiRolIsmi);
+        // Sunucundaki Maç Yetkilisi rol adını buraya yazabilirsin
+        const hasRole = message.member.roles.cache.some(r => r.name.toLowerCase().includes('maç') || r.name.toLowerCase().includes('yetkili'));
 
         if (!hasRole && !message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
             return message.channel.send('❌ **Sadece Maç Yetkilisi** bu komutu kullanabilir.');
         }
 
-        message.channel.send(`🏟️ **${command.toUpperCase()}** komutu çalıştırıldı.`);
+        message.channel.send(`🏟️ **${command.toUpperCase()}** komutu başarıyla çalıştırıldı.`);
     }
 });
 
 client.login(TOKEN);
-
