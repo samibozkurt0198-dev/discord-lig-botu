@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, EmbedBuilder, PermissionsBitField } = require('discord.js');
+const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
 const sqlite3 = require('sqlite3').verbose();
 
 const client = new Client({
@@ -48,7 +48,7 @@ db.serialize(() => {
     )`);
 });
 
-// Oyuncunun Nickname Formatını Düzenleyen Ana Fonksiyon
+// Oyuncunun Nickname Formatını Düzenleyen Yardımcı Fonksiyon
 async function updateServerNickname(guild, userId) {
     db.get(`SELECT * FROM players WHERE user_id = ?`, [userId], async (err, row) => {
         if (err || !row) return;
@@ -57,8 +57,8 @@ async function updateServerNickname(guild, userId) {
             const member = await guild.members.fetch(userId);
             if (!member) return;
 
-            // Format: Safİsim | POZ | X M
-            let formattedNick = `${row.nickname}`;
+            let cleanBaseName = row.nickname.split('|')[0].trim();
+            let formattedNick = cleanBaseName;
             
             if (row.position && row.position !== 'YOK') {
                 formattedNick += ` | ${row.position}`;
@@ -99,11 +99,10 @@ client.on('messageCreate', async (message) => {
                 { name: '🏋️ Antrenman', value: '`.ant` / `.antrenman`' },
                 { name: '🥅 Penaltı', value: '`.pen` / `.penaltı`' },
                 { name: '🔍 Oyuncu', value: '`.ara isim`' },
-                { name: '🏟️ Takım', value: '`.takımekle @takım`\n`.takımdeğer @takım`\n`.kadroekle @takım @oyuncu pozisyon`\n`.kadroçıkar @takım @oyuncu`\n`.kadro @takım`' },
+                { name: '🏟️ Takım', value: '`.takımekle @takım`\n`.kadroekle @takım @oyuncu pozisyon`\n`.kadroçıkar @takım @oyuncu`\n`.kadro @takım`' },
                 { name: '📐 Formasyon', value: '`.formasyon @takım [diziliş]`' },
                 { name: '📅 Fikstür', value: '`.fikstürekle @takım1 @takım2 GG.AA.YYYY SS:DD`\n`.fikstür`' },
-                { name: '📊 Puan', value: '`.puan`\n`.puanekle @takım miktar`' },
-                { name: '⚽ Maç', value: '`.maç @takım1 @takım2`' },
+                { name: '📊 Puan & Maç', value: '`.puan`\n`.puanekle @takım miktar`\n`.maç @takım1 @takım2`\n`.hazırlıkmaçı @takım1 @takım2`' },
                 { name: '🐦 Tweet', value: '`.tweet mesaj`' }
             )
             .setFooter({ text: message.guild ? message.guild.name : 'Lig Botu' })
@@ -115,12 +114,12 @@ client.on('messageCreate', async (message) => {
     // ---------------- OYUNCU KAYIT (.k) ----------------
     if (command === 'k') {
         const member = message.mentions.members.first();
-        // İsimdeki ekstra metinleri temizle
-        let cleanName = args.filter(a => !a.startsWith('<@')).join(' ');
+        if (!member) return message.reply('❌ Kullanım: `.k @oyuncu TakmaAd`');
 
-        if (!member || !cleanName) {
-            return message.reply('❌ Kullanım: `.k @oyuncu TakmaAd`');
-        }
+        let rawName = args.filter(a => !a.startsWith('<@')).join(' ');
+        if (!rawName) return message.reply('❌ Lütfen bir isim girin.');
+
+        let cleanName = rawName.split('|')[0].trim();
 
         db.run(`INSERT INTO players (user_id, nickname, value) VALUES (?, ?, 1) 
                 ON CONFLICT(user_id) DO UPDATE SET nickname = ?`, 
@@ -135,7 +134,6 @@ client.on('messageCreate', async (message) => {
     // ---------------- DEĞER ARTTIRMA (.dver) / DEĞER EKSİLTME (.dsil) ----------------
     if (command === 'dver' || command === 'dsil') {
         const member = message.mentions.members.first();
-        // Parametrelerden sadece sayı kısmını çek
         const amountArg = args.find(a => !a.startsWith('<@'));
         let amount = parseInt(amountArg);
 
@@ -314,6 +312,59 @@ client.on('messageCreate', async (message) => {
             }
             message.channel.send({ embeds: [embed] });
         });
+    }
+
+    // ---------------- RESMİ LİG MAÇI (.maç) ----------------
+    if (command === 'maç' || command === 'mac') {
+        const roles = message.mentions.roles.first(2);
+        if (roles.length < 2) return message.reply('❌ Kullanım: `.maç @takım1 @takım2`');
+
+        const team1 = roles[0];
+        const team2 = roles[1];
+
+        const score1 = Math.floor(Math.random() * 5);
+        const score2 = Math.floor(Math.random() * 5);
+
+        let p1 = 0, p2 = 0, w1 = 0, w2 = 0, d1 = 0, d2 = 0, l1 = 0, l2 = 0;
+
+        if (score1 > score2) { p1 = 3; w1 = 1; l2 = 1; }
+        else if (score2 > score1) { p2 = 3; w2 = 1; l1 = 1; }
+        else { p1 = 1; p2 = 1; d1 = 1; d2 = 1; }
+
+        db.run(`UPDATE teams SET played = played + 1, points = points + ?, won = won + ?, drawn = drawn + ?, lost = lost + ?, gf = gf + ?, ga = ga + ? WHERE role_id = ?`,
+            [p1, w1, d1, l1, score1, score2, team1.id]);
+
+        db.run(`UPDATE teams SET played = played + 1, points = points + ?, won = won + ?, drawn = drawn + ?, lost = lost + ?, gf = gf + ?, ga = ga + ? WHERE role_id = ?`,
+            [p2, w2, d2, l2, score2, score1, team2.id]);
+
+        const embed = new EmbedBuilder()
+            .setTitle('⚽ LİG MAÇI SONUCU')
+            .setColor('#2b2d31')
+            .setDescription(`**<@&${team1.id}> ${score1} - ${score2} <@&${team2.id}>**\n\n✅ Maç sonucu puan durumuna işlendi!`)
+            .setTimestamp();
+
+        message.channel.send({ embeds: [embed] });
+    }
+
+    // ---------------- HAZIRLIK MAÇI (.hazırlıkmaçı / .hm) ----------------
+    if (command === 'hazırlıkmaçı' || command === 'hazırlıkmaci' || command === 'hm') {
+        const roles = message.mentions.roles.first(2);
+        if (roles.length < 2) return message.reply('❌ Kullanım: `.hazırlıkmaçı @takım1 @takım2`');
+
+        const team1 = roles[0];
+        const team2 = roles[1];
+
+        // Rastgele Skor
+        const score1 = Math.floor(Math.random() * 5);
+        const score2 = Math.floor(Math.random() * 5);
+
+        const embed = new EmbedBuilder()
+            .setTitle('🤝 HAZIRLIK MAÇI SONUCU')
+            .setColor('#f1c40f')
+            .setDescription(`**<@&${team1.id}> ${score1} - ${score2} <@&${team2.id}>**\n\nℹ️ *Bu maç dostluk maçı olduğu için puan tablosuna **yansıtılmamıştır**.*`)
+            .setTimestamp();
+
+        message.channel.send({ embeds: [embed] });
     }
 
     // ---------------- PUAN EKLENME (.puanekle) ----------------
