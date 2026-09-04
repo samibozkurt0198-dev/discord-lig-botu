@@ -11,25 +11,22 @@ const client = new Client({
 });
 
 const PREFIX = '.';
-const TOKEN = process.env.DISCORD_TOKEN; // Railway Ortam Değişkeni
+const TOKEN = process.env.DISCORD_TOKEN;
 
-// Veritabanı Bağlantısı ve Tablo Oluşturma
 const db = new sqlite3.Database('./database.sqlite', (err) => {
     if (err) console.error('Veritabanı hatası:', err.message);
     else console.log('SQLite Veritabanına bağlandı.');
 });
 
 db.serialize(() => {
-    // Oyuncular Tablosu
     db.run(`CREATE TABLE IF NOT EXISTS players (
         user_id TEXT PRIMARY KEY,
         nickname TEXT,
-        value TEXT DEFAULT '10M€',
+        value INTEGER DEFAULT 1,
         team_id TEXT DEFAULT NULL,
         position TEXT DEFAULT 'YOK'
     )`);
 
-    // Takımlar Tablosu
     db.run(`CREATE TABLE IF NOT EXISTS teams (
         role_id TEXT PRIMARY KEY,
         name TEXT,
@@ -43,7 +40,6 @@ db.serialize(() => {
         formation TEXT DEFAULT '4-3-3'
     )`);
 
-    // Fikstür Tablosu
     db.run(`CREATE TABLE IF NOT EXISTS fixtures (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         team1_id TEXT,
@@ -52,7 +48,7 @@ db.serialize(() => {
     )`);
 });
 
-// Oyuncunun Discord Takma Adını (Nickname) Otomatik Güncelleyen Yardımcı Fonksiyon
+// Oyuncunun Nickname Formatını Düzenleyen Ana Fonksiyon
 async function updateServerNickname(guild, userId) {
     db.get(`SELECT * FROM players WHERE user_id = ?`, [userId], async (err, row) => {
         if (err || !row) return;
@@ -61,23 +57,22 @@ async function updateServerNickname(guild, userId) {
             const member = await guild.members.fetch(userId);
             if (!member) return;
 
-            // Nickname Formatı: İsim | POZ | Değer (Örn: V.Osimhen | SNT | 168M€)
-            let newNick = row.nickname;
+            // Format: Safİsim | POZ | X M
+            let formattedNick = `${row.nickname}`;
+            
             if (row.position && row.position !== 'YOK') {
-                newNick += ` | ${row.position}`;
+                formattedNick += ` | ${row.position}`;
             }
-            if (row.value) {
-                newNick += ` | ${row.value}`;
+            
+            formattedNick += ` | ${row.value}M`;
+
+            if (formattedNick.length > 32) {
+                formattedNick = formattedNick.substring(0, 32);
             }
 
-            // Discord isim limiti 32 karakterdir
-            if (newNick.length > 32) {
-                newNick = newNick.substring(0, 32);
-            }
-
-            await member.setNickname(newNick);
+            await member.setNickname(formattedNick);
         } catch (error) {
-            console.log(`[İsim Güncelleme Hatası] Yetki yetersiz veya sunucu sahibi: ${userId}`);
+            console.log(`[İsim Güncelleme Hatası] ${userId}`);
         }
     });
 }
@@ -100,7 +95,7 @@ client.on('messageCreate', async (message) => {
             .setColor('#2b2d31')
             .addFields(
                 { name: '📋 Kayıt', value: '`.k @oyuncu TakmaAd`\n`.kayıtsızver @oyuncu`' },
-                { name: '💰 Değer', value: '`.dver @oyuncu miktar`\n`.dsil @oyuncu`' },
+                { name: '💰 Değer', value: '`.dver @oyuncu miktar`\n`.dsil @oyuncu miktar`' },
                 { name: '🏋️ Antrenman', value: '`.ant` / `.antrenman`' },
                 { name: '🥅 Penaltı', value: '`.pen` / `.penaltı`' },
                 { name: '🔍 Oyuncu', value: '`.ara isim`' },
@@ -120,19 +115,42 @@ client.on('messageCreate', async (message) => {
     // ---------------- OYUNCU KAYIT (.k) ----------------
     if (command === 'k') {
         const member = message.mentions.members.first();
-        const nickname = args.slice(1).join(' ');
+        // İsimdeki ekstra metinleri temizle
+        let cleanName = args.filter(a => !a.startsWith('<@')).join(' ');
 
-        if (!member || !nickname) {
+        if (!member || !cleanName) {
             return message.reply('❌ Kullanım: `.k @oyuncu TakmaAd`');
         }
 
-        db.run(`INSERT INTO players (user_id, nickname) VALUES (?, ?) 
+        db.run(`INSERT INTO players (user_id, nickname, value) VALUES (?, ?, 1) 
                 ON CONFLICT(user_id) DO UPDATE SET nickname = ?`, 
-                [member.id, nickname, nickname], async (err) => {
+                [member.id, cleanName, cleanName], async (err) => {
             if (err) return message.reply('Veritabanı hatası oluştu.');
             
             await updateServerNickname(message.guild, member.id);
-            message.channel.send(`✅ ${member} kullanıcısının ismi ve kaydı güncellendi.`);
+            message.channel.send(`✅ ${member} kullanıcısının ismi **${cleanName}** olarak ayarlandı.`);
+        });
+    }
+
+    // ---------------- DEĞER ARTTIRMA (.dver) / DEĞER EKSİLTME (.dsil) ----------------
+    if (command === 'dver' || command === 'dsil') {
+        const member = message.mentions.members.first();
+        // Parametrelerden sadece sayı kısmını çek
+        const amountArg = args.find(a => !a.startsWith('<@'));
+        let amount = parseInt(amountArg);
+
+        if (!member || isNaN(amount)) {
+            return message.reply(`❌ Kullanım: \`.${command} @oyuncu miktar\` (Örn: \`.dver @oyuncu 5\`)`);
+        }
+
+        if (command === 'dsil') amount = -amount;
+
+        db.run(`UPDATE players SET value = MAX(0, value + ?) WHERE user_id = ?`, [amount, member.id], async function(err) {
+            if (err) return message.reply('Hata oluştu.');
+            if (this.changes === 0) return message.reply('❌ Oyuncu veritabanına kayıtlı değil! Önce `.k @oyuncu İsim` yapın.');
+            
+            await updateServerNickname(message.guild, member.id);
+            message.channel.send(`✅ ${member} oyuncusunun değeri güncellendi.`);
         });
     }
 
@@ -141,29 +159,11 @@ client.on('messageCreate', async (message) => {
         const member = message.mentions.members.first();
         if (!member) return message.reply('❌ Kullanım: `.kayıtsızver @oyuncu`');
 
-        db.run(`UPDATE players SET team_id = NULL, position = 'YOK', value = '0M€' WHERE user_id = ?`, [member.id], async (err) => {
+        db.run(`UPDATE players SET team_id = NULL, position = 'YOK', value = 0 WHERE user_id = ?`, [member.id], async (err) => {
             if (err) return message.reply('Hata oluştu.');
             
             try { await member.setNickname(null); } catch (e) {}
-            message.channel.send(`✅ ${member} kayıtsıza atıldı, ismi ve bilgileri sıfırlandı.`);
-        });
-    }
-
-    // ---------------- DEĞER VER (.dver) / DEĞER SİL (.dsil) ----------------
-    if (command === 'dver' || command === 'dsil') {
-        const member = message.mentions.members.first();
-        const val = command === 'dsil' ? '0M€' : args.find(a => !a.startsWith('<@'));
-
-        if (!member || (!val && command === 'dver')) {
-            return message.reply(`❌ Kullanım: \`.${command} @oyuncu ${command === 'dver' ? 'miktar' : ''}\``);
-        }
-
-        db.run(`UPDATE players SET value = ? WHERE user_id = ?`, [val, member.id], async function(err) {
-            if (err) return message.reply('Hata oluştu.');
-            if (this.changes === 0) return message.reply('❌ Bu oyuncu veritabanında kayıtlı değil! Önce `.k` ile kaydedin.');
-            
-            await updateServerNickname(message.guild, member.id);
-            message.channel.send(`✅ ${member} oyuncusunun değeri **${val}** yapıldı ve takma adı güncellendi.`);
+            message.channel.send(`✅ ${member} kayıtsıza atıldı.`);
         });
     }
 
@@ -171,21 +171,21 @@ client.on('messageCreate', async (message) => {
     if (command === 'kadroekle' || command === 'kadrockle') {
         const role = message.mentions.roles.first();
         const member = message.mentions.members.first();
-        const position = args.slice(2).join(' ') || 'YOK';
+        const position = args.filter(a => !a.startsWith('<@') && !a.startsWith('<&')).join(' ') || 'YOK';
 
         if (!role || !member) {
-            return message.reply('❌ Kullanım: `.kadroekle @takım @oyuncu [pozisyon]`');
+            return message.reply('❌ Kullanım: `.kadroekle @takım @oyuncu pozisyon`');
         }
 
-        db.run(`INSERT INTO players (user_id, nickname, team_id, position) VALUES (?, ?, ?, ?)
-                ON CONFLICT(user_id) DO UPDATE SET team_id = ?, position = ?`,
-                [member.id, member.displayName.split('|')[0].trim(), role.id, position, role.id, position], async (err) => {
-            if (err) return message.reply('Veritabanı hatası oluştu.');
-            
+        db.run(`UPDATE players SET team_id = ?, position = ? WHERE user_id = ?`,
+                [role.id, position, member.id], async function(err) {
+            if (err) return message.reply('Veritabanı hatası.');
+            if (this.changes === 0) return message.reply('❌ Oyuncu bulunamadı! Önce `.k` ile kaydedin.');
+
             try { await member.roles.add(role); } catch(e) {}
             await updateServerNickname(message.guild, member.id);
             
-            message.channel.send(`✅ ${member} oyuncusu **${role.name}** kadrosuna **[${position}]** pozisyonuyla eklendi ve ismi güncellendi.`);
+            message.channel.send(`✅ ${member} oyuncusu **${role.name}** kadrosuna **[${position}]** pozisyonuyla eklendi.`);
         });
     }
 
@@ -198,12 +198,12 @@ client.on('messageCreate', async (message) => {
 
         db.run(`UPDATE players SET team_id = NULL, position = 'YOK' WHERE user_id = ? AND team_id = ?`, [member.id, role.id], async function(err) {
             if (err) return message.reply('Hata oluştu.');
-            if (this.changes === 0) return message.reply('❌ Oyuncu bu takımın kadrosunda bulunamadı.');
+            if (this.changes === 0) return message.reply('❌ Oyuncu bu takımın kadrosunda değil.');
             
             try { await member.roles.remove(role); } catch(e) {}
             await updateServerNickname(message.guild, member.id);
             
-            message.channel.send(`✅ ${member} oyuncusu **${role.name}** kadrosundan çıkarıldı ve ismi güncellendi.`);
+            message.channel.send(`✅ ${member} oyuncusu **${role.name}** kadrosundan çıkarıldı.`);
         });
     }
 
@@ -218,13 +218,13 @@ client.on('messageCreate', async (message) => {
             const embed = new EmbedBuilder().setTitle('🔍 OYUNCU ARAMA').setColor('#2b2d31');
 
             if (!row) {
-                embed.addFields({ name: '⚪ BOŞ', value: `**${searchName}** için uygun oyuncu bulunamadı.` });
+                embed.addFields({ name: '⚪ BOŞ', value: `**${searchName}** için oyuncu bulunamadı.` });
             } else {
                 embed.addFields(
                     { name: 'Aranan', value: searchName },
                     { name: 'Oyuncu', value: `<@${row.user_id}>` },
-                    { name: 'Takma Ad', value: `${row.nickname} | ${row.position} | ${row.value}` },
-                    { name: 'Değer', value: row.value },
+                    { name: 'Takma Ad', value: `${row.nickname} | ${row.position} | ${row.value}M` },
+                    { name: 'Değer', value: `${row.value}M` },
                     { name: 'Durum', value: row.team_id ? '🔴 DOLU' : '🟢 BOŞ' }
                 );
             }
@@ -258,7 +258,7 @@ client.on('messageCreate', async (message) => {
             if (!rows || rows.length === 0) {
                 embed.setDescription('Bu takımda kayıtlı oyuncu bulunamadı.');
             } else {
-                let kadroMetni = rows.map(p => `<@${p.user_id}> - **Pozisyon:** ${p.position} - **Değer:** ${p.value}`).join('\n');
+                let kadroMetni = rows.map(p => `<@${p.user_id}> - **Pozisyon:** ${p.position} - **Değer:** ${p.value}M`).join('\n');
                 embed.setDescription(kadroMetni);
             }
 
