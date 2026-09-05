@@ -424,14 +424,13 @@ client.on('interactionCreate', async (interaction) => {
 
     // 2. KAYIT BUTONLARI TIKLANDIĞINDA AÇILAN MODALLAR
     if (customId.startsWith('btn_reg_')) {
-        // Rol yetki kontrolü
         if (!interaction.member.roles.cache.some(r => r.name === REGISTRATION_ROLE_NAME)) {
             return interaction.reply({ content: `❌ Kayıt yapabilmek için **${REGISTRATION_ROLE_NAME}** rolüne sahip olmalısınız!`, ephemeral: true });
         }
 
         const parts = customId.split('_');
-        const regType = parts[2]; // fb, kl, td
-        const targetUserId = parts[3]; // Yetkilinin etiketlediği oyuncunun ID'si
+        const regType = parts[2]; 
+        const targetUserId = parts[3]; 
 
         if (regType === 'fb') {
             const modal = new ModalBuilder()
@@ -679,7 +678,6 @@ client.on('messageCreate', async (message) => {
 
     // ---------------- OYUNCU KAYIT (.k @oyuncu) ----------------
     if (command === 'k') {
-        // Rol yetki kontrolü
         if (!message.member.roles.cache.some(r => r.name === REGISTRATION_ROLE_NAME)) {
             return message.reply(`❌ Kayıt komutunu kullanabilmek için **${REGISTRATION_ROLE_NAME}** rolüne sahip olmalısınız!`);
         }
@@ -1026,36 +1024,115 @@ client.on('messageCreate', async (message) => {
         });
     }
 
-    // ---------------- PUAN DURUMU (.puan) ----------------
+    // ---------------- PUAN DURUMU (.puan - GÖRSELLİ) ----------------
     if (command === 'puan') {
-        db.all(`SELECT * FROM teams ORDER BY points DESC, (gf - ga) DESC`, [], (err, rows) => {
-            if (err) return console.error(err);
-
-            const embed = new EmbedBuilder()
-                .setTitle(`📊 ${serverName} • PUAN DURUMU`)
-                .setColor('#2b2d31')
-                .setFooter({ text: `${message.guild ? message.guild.name : 'Lig'} • Puan Durumu` })
-                .setTimestamp();
-
-            if (!rows || rows.length === 0) {
-                embed.setDescription('Henüz lige eklenmiş bir takım bulunmuyor.');
-            } else {
-                let descriptionList = 'Lig sıralaması\n\n🏆 **Sıralama**\n\n';
-                const medals = ['🥇', '🥈', '🥉'];
-
-                rows.forEach((team, index) => {
-                    const rank = index < 3 ? medals[index] : `${index + 1}.`;
-                    const average = team.gf - team.ga;
-                    const avgSign = average >= 0 ? `+${average}` : `${average}`;
-
-                    descriptionList += `${rank} • **${team.name} — ${team.points} P**\n` +
-                        `O: ${team.played} • G: ${team.won} • B: ${team.drawn} • M: ${team.lost}\n` +
-                        `AG: ${team.gf} • YG: ${team.ga} • AV: ${avgSign}\n\n`;
-                });
-                embed.setDescription(descriptionList);
+        db.all(`SELECT * FROM teams ORDER BY points DESC, (gf - ga) DESC`, [], async (err, rows) => {
+            if (err) {
+                console.error(err);
+                return message.reply('Puan durumu oluşturulurken bir hata meydana geldi.');
             }
 
-            message.channel.send({ embeds: [embed] });
+            if (!rows || rows.length === 0) {
+                return message.reply('Henüz lige eklenmiş bir takım bulunmuyor.');
+            }
+
+            const width = 900;
+            const rowHeight = 65;
+            const headerHeight = 120;
+            const padding = 20;
+            const height = headerHeight + (rows.length * rowHeight) + padding;
+
+            const canvas = createCanvas(width, height);
+            const ctx = canvas.getContext('2d');
+
+            // Arka Plan
+            ctx.fillStyle = '#1e1f22';
+            ctx.fillRect(0, 0, width, height);
+
+            // Başlık Kartı
+            ctx.fillStyle = '#2b2d31';
+            ctx.roundRect(20, 20, width - 40, 80, 10);
+            ctx.fill();
+
+            // Başlık Metni
+            ctx.fillStyle = '#f1c40f';
+            ctx.font = 'bold 30px Sans-serif';
+            ctx.textAlign = 'left';
+            ctx.fillText(`📊 ${serverName} • PUAN DURUMU`, 40, 70);
+
+            // Tablo Başlıkları (Sütun İsimleri)
+            ctx.fillStyle = '#949ba4';
+            ctx.font = 'bold 16px Sans-serif';
+            ctx.fillText('TAKIM', 100, 125);
+            
+            ctx.textAlign = 'center';
+            ctx.fillText('O', 500, 125);
+            ctx.fillText('G', 560, 125);
+            ctx.fillText('B', 620, 125);
+            ctx.fillText('M', 680, 125);
+            ctx.fillText('AV', 750, 125);
+            ctx.fillText('P', 830, 125);
+
+            // Satırları Oluşturma
+            for (let index = 0; index < rows.length; index++) {
+                const team = rows[index];
+                const y = headerHeight + (index * rowHeight) + 20;
+
+                // Satır Kutusu
+                ctx.fillStyle = (index % 2 === 0) ? '#2b2d31' : '#232428';
+                ctx.roundRect(20, y - 35, width - 40, 55, 8);
+                ctx.fill();
+
+                // Sıralama
+                ctx.textAlign = 'center';
+                ctx.font = 'bold 20px Sans-serif';
+
+                if (index === 0) {
+                    ctx.fillStyle = '#f1c40f';
+                    ctx.fillText('🥇', 55, y);
+                } else if (index === 1) {
+                    ctx.fillStyle = '#bdc3c7';
+                    ctx.fillText('🥈', 55, y);
+                } else if (index === 2) {
+                    ctx.fillStyle = '#e67e22';
+                    ctx.fillText('🥉', 55, y);
+                } else {
+                    ctx.fillStyle = '#ffffff';
+                    ctx.fillText(`${index + 1}.`, 55, y);
+                }
+
+                // Takım İsmi
+                ctx.textAlign = 'left';
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 20px Sans-serif';
+                const teamName = team.name.length > 22 ? team.name.substring(0, 20) + '..' : team.name;
+                ctx.fillText(teamName, 100, y);
+
+                // O, G, B, M
+                ctx.textAlign = 'center';
+                ctx.font = 'bold 18px Sans-serif';
+                ctx.fillStyle = '#dbdee1';
+
+                ctx.fillText(team.played.toString(), 500, y);
+                ctx.fillText(team.won.toString(), 560, y);
+                ctx.fillText(team.drawn.toString(), 620, y);
+                ctx.fillText(team.lost.toString(), 680, y);
+
+                // Averaj
+                const av = team.gf - team.ga;
+                ctx.fillStyle = av > 0 ? '#2ecc71' : (av < 0 ? '#e74c3c' : '#dbdee1');
+                ctx.fillText((av > 0 ? `+${av}` : av).toString(), 750, y);
+
+                // Puan
+                ctx.fillStyle = '#f1c40f';
+                ctx.font = 'bold 22px Sans-serif';
+                ctx.fillText(team.points.toString(), 830, y);
+            }
+
+            const buffer = await canvas.toBuffer('image/png');
+            const attachment = new AttachmentBuilder(buffer, { name: 'puan-durumu.png' });
+
+            message.channel.send({ files: [attachment] });
         });
     }
 
