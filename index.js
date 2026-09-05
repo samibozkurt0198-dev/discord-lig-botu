@@ -5,9 +5,11 @@ const {
     ActionRowBuilder, 
     ButtonBuilder, 
     ButtonStyle, 
-    StringSelectMenuBuilder 
+    StringSelectMenuBuilder,
+    AttachmentBuilder
 } = require('discord.js');
 const sqlite3 = require('sqlite3').verbose();
+const { createCanvas } = require('@napi-rs/canvas');
 
 const client = new Client({
     intents: [
@@ -72,87 +74,142 @@ const TACTICS = {
 
 // Popüler 6 Diziliş ve Pozisyon Haritaları
 const FORMATIONS = {
-    '4-3-3': ['SNT', 'SLK', 'SĞK', 'OS', 'OS', 'OS', 'SLB', 'SĞB', 'STP', 'STP', 'KL'],
-    '4-4-2': ['SNT', 'SNT', 'SLO', 'SĞO', 'OS', 'OS', 'SLB', 'SĞB', 'STP', 'STP', 'KL'],
-    '4-2-3-1': ['SNT', 'MÖ', 'SLO', 'SĞO', 'MÖD', 'MÖD', 'SLB', 'SĞB', 'STP', 'STP', 'KL'],
-    '3-5-2': ['SNT', 'SNT', 'MÖ', 'SLO', 'SĞO', 'OS', 'OS', 'STP', 'STP', 'STP', 'KL'],
-    '5-3-2': ['SNT', 'SNT', 'OS', 'OS', 'OS', 'SLK' /*Kanat Bek*/, 'SĞK', 'STP', 'STP', 'STP', 'KL'],
-    '4-1-2-1-2': ['SNT', 'SNT', 'MÖ', 'OS', 'OS', 'MÖD', 'SLB', 'SĞB', 'STP', 'STP', 'KL']
+    '4-3-3': ['SNT', 'SLK', 'SĞK', 'OS1', 'OS2', 'OS3', 'SLB', 'SĞB', 'STP1', 'STP2', 'KL'],
+    '4-4-2': ['SNT1', 'SNT2', 'SLO', 'SĞO', 'OS1', 'OS2', 'SLB', 'SĞB', 'STP1', 'STP2', 'KL'],
+    '4-2-3-1': ['SNT', 'MÖ', 'SLO', 'SĞO', 'MÖD1', 'MÖD2', 'SLB', 'SĞB', 'STP1', 'STP2', 'KL'],
+    '3-5-2': ['SNT1', 'SNT2', 'MÖ', 'SLO', 'SĞO', 'OS1', 'OS2', 'STP1', 'STP2', 'STP3', 'KL'],
+    '5-3-2': ['SNT1', 'SNT2', 'OS1', 'OS2', 'OS3', 'SLK', 'SĞK', 'STP1', 'STP2', 'STP3', 'KL'],
+    '4-1-2-1-2': ['SNT1', 'SNT2', 'MÖ', 'OS1', 'OS2', 'MÖD', 'SLB', 'SĞB', 'STP1', 'STP2', 'KL']
 };
 
-// Saha Üzerinde İlk 11 Görsel Metin Şablonu Oluşturucu
-function generatePitchGraphic(formation, XI = {}) {
-    const p = (pos, index) => {
-        const key = `${pos}_${index}`;
-        const name = XI[key] || pos;
-        return name.length > 8 ? name.substring(0, 6) + '..' : name.padEnd(8, ' ');
-    };
+// Canvas Üzerinde Yeşil Saha Görseli Oluşturan Fonksiyon
+async function createPitchImage(formation, XI = {}) {
+    const canvas = createCanvas(800, 1000);
+    const ctx = canvas.getContext('2d');
 
-    let counts = {};
-    const getPos = (pos) => {
-        counts[pos] = (counts[pos] || 0) + 1;
-        return p(pos, counts[pos]);
-    };
+    // 1. Yeşil Saha Çimi ve Arka Plan
+    ctx.fillStyle = '#1e6f3b';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    if (formation === '4-3-3') {
-        return "```\n" +
-            `==================== SAHA ====================\n` +
-            `      [${getPos('SLK')}]   [${getPos('SNT')}]   [${getPos('SĞK')}]\n\n` +
-            `         [${getPos('OS')}]   [${getPos('OS')}]   [${getPos('OS')}]\n\n` +
-            `  [${getPos('SLB')}]  [${getPos('STP')}]  [${getPos('STP')}]  [${getPos('SĞB')}]\n\n` +
-            `                     [${getPos('KL')}]\n` +
-            `==============================================\n` +
-            "```";
-    } else if (formation === '4-4-2') {
-        return "```\n" +
-            `==================== SAHA ====================\n` +
-            `            [${getPos('SNT')}]      [${getPos('SNT')}]\n\n` +
-            `  [${getPos('SLO')}]    [${getPos('OS')}]    [${getPos('OS')}]    [${getPos('SĞO')}]\n\n` +
-            `  [${getPos('SLB')}]    [${getPos('STP')}]    [${getPos('STP')}]    [${getPos('SĞB')}]\n\n` +
-            `                     [${getPos('KL')}]\n` +
-            `==============================================\n` +
-            "```";
-    } else if (formation === '4-2-3-1') {
-        return "```\n" +
-            `==================== SAHA ====================\n` +
-            `                     [${getPos('SNT')}]\n` +
-            `  [${getPos('SLO')}]          [${getPos('MÖ')}]          [${getPos('SĞO')}]\n` +
-            `            [${getPos('MÖD')}]        [${getPos('MÖD')}]\n` +
-            `  [${getPos('SLB')}]    [${getPos('STP')}]    [${getPos('STP')}]    [${getPos('SĞB')}]\n\n` +
-            `                     [${getPos('KL')}]\n` +
-            `==============================================\n` +
-            "```";
-    } else if (formation === '3-5-2') {
-        return "```\n" +
-            `==================== SAHA ====================\n` +
-            `            [${getPos('SNT')}]      [${getPos('SNT')}]\n` +
-            `                     [${getPos('MÖ')}]\n` +
-            `  [${getPos('SLO')}]    [${getPos('OS')}]    [${getPos('OS')}]    [${getPos('SĞO')}]\n` +
-            `        [${getPos('STP')}]    [${getPos('STP')}]    [${getPos('STP')}]\n\n` +
-            `                     [${getPos('KL')}]\n` +
-            `==============================================\n` +
-            "```";
-    } else if (formation === '5-3-2') {
-        return "```\n" +
-            `==================== SAHA ====================\n` +
-            `            [${getPos('SNT')}]      [${getPos('SNT')}]\n` +
-            `         [${getPos('OS')}]   [${getPos('OS')}]   [${getPos('OS')}]\n` +
-            `  [${getPos('SLK')}]  [${getPos('STP')}] [${getPos('STP')}] [${getPos('STP')}]  [${getPos('SĞK')}]\n\n` +
-            `                     [${getPos('KL')}]\n` +
-            `==============================================\n` +
-            "```";
-    } else { // 4-1-2-1-2 veya varsayılan
-        return "```\n" +
-            `==================== SAHA ====================\n` +
-            `            [${getPos('SNT')}]      [${getPos('SNT')}]\n` +
-            `                     [${getPos('MÖ')}]\n` +
-            `            [${getPos('OS')}]        [${getPos('OS')}]\n` +
-            `                     [${getPos('MÖD')}]\n` +
-            `  [${getPos('SLB')}]    [${getPos('STP')}]    [${getPos('STP')}]    [${getPos('SĞB')}]\n` +
-            `                     [${getPos('KL')}]\n` +
-            `==============================================\n` +
-            "```";
+    // Saha Çim Deseni (Açık-Koyu Koyu Çizgiler)
+    for (let i = 0; i < canvas.height; i += 100) {
+        if ((i / 100) % 2 === 0) {
+            ctx.fillStyle = '#238044';
+            ctx.fillRect(0, i, canvas.width, 100);
+        }
     }
+
+    // Saha Çizgileri
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 5;
+
+    // Dış Saha Çizgisi
+    ctx.strokeRect(30, 30, 740, 940);
+
+    // Orta Çizgi ve Orta Yuvarlak
+    ctx.beginPath();
+    ctx.moveTo(30, 500);
+    ctx.lineTo(770, 500);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(400, 500, 100, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Üst Ceza Sahası (Rakip)
+    ctx.strokeRect(220, 30, 360, 160);
+    ctx.strokeRect(300, 30, 200, 60);
+
+    // Alt Ceza Sahası (Ev Sahibi)
+    ctx.strokeRect(220, 810, 360, 160);
+    ctx.strokeRect(300, 910, 200, 60);
+
+    // 2. Formasyon Koordinat Haritası (800x1000 çözünürlüğe göre)
+    const POS_COORDS = {
+        '4-3-3': {
+            'SNT_1': { x: 400, y: 150 }, 'SLK_1': { x: 180, y: 200 }, 'SĞK_1': { x: 620, y: 200 },
+            'OS_1': { x: 260, y: 400 }, 'OS_2': { x: 400, y: 430 }, 'OS_3': { x: 540, y: 400 },
+            'SLB_1': { x: 140, y: 720 }, 'STP_1': { x: 310, y: 760 }, 'STP_2': { x: 490, y: 760 }, 'SĞB_1': { x: 660, y: 720 },
+            'KL_1': { x: 400, y: 910 }
+        },
+        '4-4-2': {
+            'SNT_1': { x: 280, y: 160 }, 'SNT_2': { x: 520, y: 160 },
+            'SLO_1': { x: 140, y: 380 }, 'OS_1': { x: 310, y: 420 }, 'OS_2': { x: 490, y: 420 }, 'SĞO_1': { x: 660, y: 380 },
+            'SLB_1': { x: 140, y: 720 }, 'STP_1': { x: 310, y: 760 }, 'STP_2': { x: 490, y: 760 }, 'SĞB_1': { x: 660, y: 720 },
+            'KL_1': { x: 400, y: 910 }
+        },
+        '4-2-3-1': {
+            'SNT_1': { x: 400, y: 130 },
+            'SLO_1': { x: 160, y: 280 }, 'MÖ_1': { x: 400, y: 270 }, 'SĞO_1': { x: 640, y: 280 },
+            'MÖD_1': { x: 300, y: 480 }, 'MÖD_2': { x: 500, y: 480 },
+            'SLB_1': { x: 140, y: 720 }, 'STP_1': { x: 310, y: 760 }, 'STP_2': { x: 490, y: 760 }, 'SĞB_1': { x: 660, y: 720 },
+            'KL_1': { x: 400, y: 910 }
+        },
+        '3-5-2': {
+            'SNT_1': { x: 280, y: 150 }, 'SNT_2': { x: 520, y: 150 },
+            'MÖ_1': { x: 400, y: 280 },
+            'SLO_1': { x: 120, y: 420 }, 'OS_1': { x: 300, y: 450 }, 'OS_2': { x: 500, y: 450 }, 'SĞO_1': { x: 680, y: 420 },
+            'STP_1': { x: 220, y: 750 }, 'STP_2': { x: 400, y: 760 }, 'STP_3': { x: 580, y: 750 },
+            'KL_1': { x: 400, y: 910 }
+        },
+        '5-3-2': {
+            'SNT_1': { x: 280, y: 150 }, 'SNT_2': { x: 520, y: 150 },
+            'OS_1': { x: 260, y: 380 }, 'OS_2': { x: 400, y: 400 }, 'OS_3': { x: 540, y: 380 },
+            'SLK_1': { x: 110, y: 650 }, 'STP_1': { x: 255, y: 760 }, 'STP_2': { x: 400, y: 770 }, 'STP_3': { x: 545, y: 760 }, 'SĞK_1': { x: 690, y: 650 },
+            'KL_1': { x: 400, y: 910 }
+        },
+        '4-1-2-1-2': {
+            'SNT_1': { x: 280, y: 140 }, 'SNT_2': { x: 520, y: 140 },
+            'MÖ_1': { x: 400, y: 260 },
+            'OS_1': { x: 250, y: 390 }, 'OS_2': { x: 550, y: 390 },
+            'MÖD_1': { x: 400, y: 520 },
+            'SLB_1': { x: 140, y: 720 }, 'STP_1': { x: 310, y: 760 }, 'STP_2': { x: 490, y: 760 }, 'SĞB_1': { x: 660, y: 720 },
+            'KL_1': { x: 400, y: 910 }
+        }
+    };
+
+    const coords = POS_COORDS[formation] || POS_COORDS['4-3-3'];
+
+    // 3. Oyuncu Kartlarını Sahaya Çiz
+    for (const [key, pos] of Object.entries(coords)) {
+        const playerName = XI[key] || key.split('_')[0];
+        const isFilled = Boolean(XI[key]);
+
+        // Pozisyon Dairesi / Rozeti
+        ctx.fillStyle = isFilled ? '#27ae60' : '#111111';
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y - 18, 16, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // Pozisyon Kısaltma Yazısı
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 12px Sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(key.split('_')[0], pos.x, pos.y - 14);
+
+        // İsim Kutusu (Siyah Arka Plan)
+        ctx.fillStyle = isFilled ? 'rgba(0, 0, 0, 0.85)' : 'rgba(0, 0, 0, 0.5)';
+        ctx.beginPath();
+        const boxWidth = 120;
+        const boxHeight = 30;
+        ctx.roundRect(pos.x - (boxWidth / 2), pos.y + 4, boxWidth, boxHeight, 8);
+        ctx.fill();
+        ctx.strokeStyle = isFilled ? '#f1c40f' : '#7f8c8d';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        // Oyuncu İsmi
+        ctx.fillStyle = isFilled ? '#ffffff' : '#bdc3c7';
+        ctx.font = 'bold 14px Sans-serif';
+        const displayName = playerName.length > 12 ? playerName.substring(0, 10) + '..' : playerName;
+        ctx.fillText(displayName, pos.x, pos.y + 24);
+    }
+
+    const buffer = await canvas.toBuffer('image/png');
+    return new AttachmentBuilder(buffer, { name: 'kadro.png' });
 }
 
 async function updateServerNickname(guild, userId) {
@@ -417,24 +474,27 @@ client.on('interactionCreate', async (interaction) => {
         });
     }
 
-    // 3. İLK 11 KADRO DÜZENLEME BUTONU
+    // 3. İLK 11 KADRO DÜZENLEME BUTONU (YENİLENMİŞ CANVAS RESİMLİ)
     if (customId.startsWith('lineup_menu_')) {
+        await interaction.deferReply({ ephemeral: true });
         const teamRoleId = customId.replace('lineup_menu_', '');
 
-        db.get(`SELECT * FROM teams WHERE role_id = ?`, [teamRoleId], (err, teamRow) => {
-            if (!teamRow) return interaction.reply({ content: 'Takım verisi bulunamadı.', ephemeral: true });
+        db.get(`SELECT * FROM teams WHERE role_id = ?`, [teamRoleId], async (err, teamRow) => {
+            if (!teamRow) return interaction.editReply({ content: 'Takım verisi bulunamadı.' });
 
             const formation = teamRow.formation || '4-3-3';
             const positions = FORMATIONS[formation] || FORMATIONS['4-3-3'];
             let XI = {};
             try { XI = JSON.parse(teamRow.starting_11 || '{}'); } catch(e) {}
 
-            const pitchGraphic = generatePitchGraphic(formation, XI);
+            // Metin şablonu yerine Canvas Görseli oluşturuluyor
+            const pitchImage = await createPitchImage(formation, XI);
 
             let buttons = [];
             let counts = {};
 
-            positions.forEach((pos) => {
+            positions.forEach((posWithIndex) => {
+                const pos = posWithIndex.replace(/[0-9]/g, '');
                 counts[pos] = (counts[pos] || 0) + 1;
                 const posIndex = counts[pos];
                 const key = `${pos}_${posIndex}`;
@@ -457,9 +517,10 @@ client.on('interactionCreate', async (interaction) => {
             const lineupEmbed = new EmbedBuilder()
                 .setTitle(`📋 İLK 11 AYARLAMA (${formation})`)
                 .setColor('#2ecc71')
-                .setDescription(`Saha üzerindeki yerleşim aşağıdadır. Değiştirmek istediğiniz pozisyona tıklayıp listeden oyuncu seçin:\n\n${pitchGraphic}`);
+                .setDescription(`Saha üzerindeki yerleşim aşağıdadır. Değiştirmek istediğiniz pozisyona tıklayıp listeden oyuncu seçin:`)
+                .setImage('attachment://kadro.png');
 
-            interaction.reply({ embeds: [lineupEmbed], components: rows, ephemeral: true });
+            interaction.editReply({ embeds: [lineupEmbed], files: [pitchImage], components: rows });
         });
     }
 
