@@ -1,4 +1,12 @@
-const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
+const { 
+    Client, 
+    GatewayIntentBits, 
+    EmbedBuilder, 
+    ActionRowBuilder, 
+    ButtonBuilder, 
+    ButtonStyle, 
+    StringSelectMenuBuilder 
+} = require('discord.js');
 const sqlite3 = require('sqlite3').verbose();
 
 const client = new Client({
@@ -18,7 +26,7 @@ const db = new sqlite3.Database('./database.sqlite', (err) => {
     else console.log('SQLite Veritabanına bağlandı.');
 });
 
-// Veritabanı Tablolarına Asist Sütunları Eklendi
+// Veritabanı Tablolarına Taktik, Diziliş ve İlk 11 Sütunları Eklendi
 db.serialize(() => {
     db.run(`CREATE TABLE IF NOT EXISTS players (
         user_id TEXT PRIMARY KEY,
@@ -41,7 +49,9 @@ db.serialize(() => {
         lost INTEGER DEFAULT 0,
         gf INTEGER DEFAULT 0,
         ga INTEGER DEFAULT 0,
-        formation TEXT DEFAULT '4-3-3'
+        formation TEXT DEFAULT '4-3-3',
+        tactic TEXT DEFAULT 'Dengeli',
+        starting_11 TEXT DEFAULT '{}'
     )`);
 
     db.run(`CREATE TABLE IF NOT EXISTS fixtures (
@@ -51,6 +61,99 @@ db.serialize(() => {
         date_str TEXT
     )`);
 });
+
+// FC 26 / Taş-Kağıt-Makas Taktik Sistemi Ustunluk Matrisi
+const TACTICS = {
+    'Baskı': { counters: 'Tiki-Taka', description: 'Tiki-Taka taktiğini ezer, Otobüs Çek taktiğine karşı zayıftır.' },
+    'Tiki-Taka': { counters: 'Otobüs Çek', description: 'Otobüs Çek taktiğini ezer, Baskı taktiğine karşı zayıftır.' },
+    'Otobüs Çek': { counters: 'Baskı', description: 'Baskı taktiğini ezer, Tiki-Taka taktiğine karşı zayıftır.' },
+    'Dengeli': { counters: null, description: 'Standart taktik. Hiçbir taktiğe karşı ekstra üstünlüğü veya zayıflığı yoktur.' }
+};
+
+// Popüler 6 Diziliş ve Pozisyon Haritaları
+const FORMATIONS = {
+    '4-3-3': ['SNT', 'SLK', 'SĞK', 'OS', 'OS', 'OS', 'SLB', 'SĞB', 'STP', 'STP', 'KL'],
+    '4-4-2': ['SNT', 'SNT', 'SLO', 'SĞO', 'OS', 'OS', 'SLB', 'SĞB', 'STP', 'STP', 'KL'],
+    '4-2-3-1': ['SNT', 'MÖ', 'SLO', 'SĞO', 'MÖD', 'MÖD', 'SLB', 'SĞB', 'STP', 'STP', 'KL'],
+    '3-5-2': ['SNT', 'SNT', 'MÖ', 'SLO', 'SĞO', 'OS', 'OS', 'STP', 'STP', 'STP', 'KL'],
+    '5-3-2': ['SNT', 'SNT', 'OS', 'OS', 'OS', 'SLK' /*Kanat Bek*/, 'SĞK', 'STP', 'STP', 'STP', 'KL'],
+    '4-1-2-1-2': ['SNT', 'SNT', 'MÖ', 'OS', 'OS', 'MÖD', 'SLB', 'SĞB', 'STP', 'STP', 'KL']
+};
+
+// Saha Üzerinde İlk 11 Görsel Metin Şablonu Oluşturucu
+function generatePitchGraphic(formation, XI = {}) {
+    const p = (pos, index) => {
+        const key = `${pos}_${index}`;
+        const name = XI[key] || pos;
+        return name.length > 8 ? name.substring(0, 6) + '..' : name.padEnd(8, ' ');
+    };
+
+    let counts = {};
+    const getPos = (pos) => {
+        counts[pos] = (counts[pos] || 0) + 1;
+        return p(pos, counts[pos]);
+    };
+
+    if (formation === '4-3-3') {
+        return "```\n" +
+            `==================== SAHA ====================\n` +
+            `      [${getPos('SLK')}]   [${getPos('SNT')}]   [${getPos('SĞK')}]\n\n` +
+            `         [${getPos('OS')}]   [${getPos('OS')}]   [${getPos('OS')}]\n\n` +
+            `  [${getPos('SLB')}]  [${getPos('STP')}]  [${getPos('STP')}]  [${getPos('SĞB')}]\n\n` +
+            `                     [${getPos('KL')}]\n` +
+            `==============================================\n` +
+            "```";
+    } else if (formation === '4-4-2') {
+        return "```\n" +
+            `==================== SAHA ====================\n` +
+            `            [${getPos('SNT')}]      [${getPos('SNT')}]\n\n` +
+            `  [${getPos('SLO')}]    [${getPos('OS')}]    [${getPos('OS')}]    [${getPos('SĞO')}]\n\n` +
+            `  [${getPos('SLB')}]    [${getPos('STP')}]    [${getPos('STP')}]    [${getPos('SĞB')}]\n\n` +
+            `                     [${getPos('KL')}]\n` +
+            `==============================================\n` +
+            "```";
+    } else if (formation === '4-2-3-1') {
+        return "```\n" +
+            `==================== SAHA ====================\n` +
+            `                     [${getPos('SNT')}]\n` +
+            `  [${getPos('SLO')}]          [${getPos('MÖ')}]          [${getPos('SĞO')}]\n` +
+            `            [${getPos('MÖD')}]        [${getPos('MÖD')}]\n` +
+            `  [${getPos('SLB')}]    [${getPos('STP')}]    [${getPos('STP')}]    [${getPos('SĞB')}]\n\n` +
+            `                     [${getPos('KL')}]\n` +
+            `==============================================\n` +
+            "```";
+    } else if (formation === '3-5-2') {
+        return "```\n" +
+            `==================== SAHA ====================\n` +
+            `            [${getPos('SNT')}]      [${getPos('SNT')}]\n` +
+            `                     [${getPos('MÖ')}]\n` +
+            `  [${getPos('SLO')}]    [${getPos('OS')}]    [${getPos('OS')}]    [${getPos('SĞO')}]\n` +
+            `        [${getPos('STP')}]    [${getPos('STP')}]    [${getPos('STP')}]\n\n` +
+            `                     [${getPos('KL')}]\n` +
+            `==============================================\n` +
+            "```";
+    } else if (formation === '5-3-2') {
+        return "```\n" +
+            `==================== SAHA ====================\n` +
+            `            [${getPos('SNT')}]      [${getPos('SNT')}]\n` +
+            `         [${getPos('OS')}]   [${getPos('OS')}]   [${getPos('OS')}]\n` +
+            `  [${getPos('SLK')}]  [${getPos('STP')}] [${getPos('STP')}] [${getPos('STP')}]  [${getPos('SĞK')}]\n\n` +
+            `                     [${getPos('KL')}]\n` +
+            `==============================================\n` +
+            "```";
+    } else { // 4-1-2-1-2 veya varsayılan
+        return "```\n" +
+            `==================== SAHA ====================\n` +
+            `            [${getPos('SNT')}]      [${getPos('SNT')}]\n` +
+            `                     [${getPos('MÖ')}]\n` +
+            `            [${getPos('OS')}]        [${getPos('OS')}]\n` +
+            `                     [${getPos('MÖD')}]\n` +
+            `  [${getPos('SLB')}]    [${getPos('STP')}]    [${getPos('STP')}]    [${getPos('SĞB')}]\n` +
+            `                     [${getPos('KL')}]\n` +
+            `==============================================\n` +
+            "```";
+    }
+}
 
 async function updateServerNickname(guild, userId) {
     db.get(`SELECT * FROM players WHERE user_id = ?`, [userId], async (err, row) => {
@@ -89,138 +192,323 @@ async function runLiveMatch(message, team1Role, team2Role, isOfficial = true) {
                 return resolve(null);
             }
 
-            const team1Players = players.filter(p => p.team_id === team1Role.id);
-            const team2Players = players.filter(p => p.team_id === team2Role.id);
+            db.all(`SELECT * FROM teams WHERE role_id IN (?, ?)`, [team1Role.id, team2Role.id], async (err, teamRows) => {
+                const t1Data = teamRows.find(t => t.role_id === team1Role.id) || {};
+                const t2Data = teamRows.find(t => t.role_id === team2Role.id) || {};
 
-            const val1 = team1Players.reduce((acc, p) => acc + p.value, 0);
-            const val2 = team2Players.reduce((acc, p) => acc + p.value, 0);
+                const team1Players = players.filter(p => p.team_id === team1Role.id);
+                const team2Players = players.filter(p => p.team_id === team2Role.id);
 
-            let score1 = 0;
-            let score2 = 0;
-            let currentPossession = (val1 >= val2) ? team1Role : team2Role;
-            let currentDistance = 50; // Başlangıçta santra (50 metre)
-            let lastPasser = null;
-            let currentCarrier = null;
+                let val1 = team1Players.reduce((acc, p) => acc + p.value, 0);
+                let val2 = team2Players.reduce((acc, p) => acc + p.value, 0);
 
-            let matchLog = [];
-            let scorers = [];
+                // Taktiksel Taş-Kağıt-Makas Üstünlüğü Hesaplama
+                const tac1 = t1Data.tactic || 'Dengeli';
+                const tac2 = t2Data.tactic || 'Dengeli';
+                let tacticNotice = '';
 
-            const getRandomPlayer = (tPlayers) => {
-                if (!tPlayers || tPlayers.length === 0) return { nickname: 'Açık Oyuncu', user_id: null };
-                return tPlayers[Math.floor(Math.random() * tPlayers.length)];
-            };
-
-            const embed = new EmbedBuilder()
-                .setTitle(`🏟️ CANLI MAÇ: ${team1Role.name} vs ${team2Role.name}`)
-                .setColor('#2b2d31')
-                .setDescription('Maç hakemin düdüğüyle başlamak üzere...')
-                .setTimestamp();
-
-            const matchMsg = await message.channel.send({ embeds: [embed] });
-
-            let minute = 1;
-
-            const interval = setInterval(async () => {
-                if (minute > 90) {
-                    clearInterval(interval);
-
-                    const finalEmbed = new EmbedBuilder()
-                        .setTitle(`🏁 MAÇ BİTTİ | ${team1Role.name} ${score1} - ${score2} ${team2Role.name}`)
-                        .setColor('#00ff00')
-                        .addFields(
-                            { name: '📊 Kadro Değerleri', value: `**${team1Role.name}:** ${val1}M\n**${team2Role.name}:** ${val2}M` },
-                            { name: '⚽ Goller ve Asistler', value: scorers.length > 0 ? scorers.join('\n') : 'Gol olmadı.' }
-                        )
-                        .setFooter({ text: isOfficial ? 'Resmi Lig Maçı İşlendi' : 'Hazırlık Maçı' })
-                        .setTimestamp();
-
-                    await matchMsg.edit({ embeds: [finalEmbed] });
-                    return resolve({ score1, score2, team1Players, team2Players });
+                if (TACTICS[tac1]?.counters === tac2) {
+                    val1 = Math.round(val1 * 1.25); // %25 güç bonusu
+                    tacticNotice = `\n🔥 **${team1Role.name}** tıkır tıkır işleyen **${tac1}** taktiğiyle **${team2Role.name}** takımının **${tac2}** taktiğini eziyor! (+%25 Değer Büyüsü)`;
+                } else if (TACTICS[tac2]?.counters === tac1) {
+                    val2 = Math.round(val2 * 1.25);
+                    tacticNotice = `\n🔥 **${team2Role.name}** tıkır tıkır işleyen **${tac2}** taktiğiyle **${team1Role.name}** takımının **${tac1}** taktiğini eziyor! (+%25 Değer Büyüsü)`;
                 }
 
-                const currentTeamPlayers = (currentPossession.id === team1Role.id) ? team1Players : team2Players;
-                
-                // Oyuncu değiştir veya topu koru
-                if (!currentCarrier || Math.random() < 0.4) {
-                    lastPasser = currentCarrier;
-                    currentCarrier = getRandomPlayer(currentTeamPlayers);
-                }
+                let score1 = 0;
+                let score2 = 0;
+                let currentPossession = (val1 >= val2) ? team1Role : team2Role;
+                let currentDistance = 50; 
+                let lastPasser = null;
+                let currentCarrier = null;
 
-                let actionText = '';
+                let matchLog = [];
+                let scorers = [];
 
-                // Hücum / Top Kaybı Mantığı
-                const teamVal = (currentPossession.id === team1Role.id) ? val1 : val2;
-                const oppVal = (currentPossession.id === team1Role.id) ? val2 : val1;
-                const attackSuccessChance = 0.5 + ((teamVal - oppVal) * 0.01);
+                const getRandomPlayer = (tPlayers) => {
+                    if (!tPlayers || tPlayers.length === 0) return { nickname: 'Açık Oyuncu', user_id: null };
+                    return tPlayers[Math.floor(Math.random() * tPlayers.length)];
+                };
 
-                if (Math.random() < attackSuccessChance) {
-                    // İlerleme
-                    currentDistance -= Math.floor(Math.random() * 12) + 5;
-                    if (currentDistance < 8) currentDistance = 8;
-                    actionText = `🏃 **${currentCarrier.nickname}** topu ileriye taşıyor! Kaleye mesafe: **${currentDistance}m**`;
-                } else {
-                    // Top Kaybı
-                    currentPossession = (currentPossession.id === team1Role.id) ? team2Role : team1Role;
-                    currentDistance = 60 - currentDistance;
-                    if (currentDistance < 20) currentDistance = 35;
-                    currentCarrier = getRandomPlayer((currentPossession.id === team1Role.id) ? team1Players : team2Players);
-                    lastPasser = null;
-                    actionText = `❌ Savunma araya girdi! Top **${currentPossession.name}** takımına geçti.`;
-                }
+                const embed = new EmbedBuilder()
+                    .setTitle(`🏟️ CANLI MAÇ: ${team1Role.name} vs ${team2Role.name}`)
+                    .setColor('#2b2d31')
+                    .setDescription(`Maç hakemin düdüğüyle başlamak üzere...${tacticNotice}`)
+                    .setTimestamp();
 
-                // Şut ve Gol İhtimali (Mesafe kısaldıkça ihtimal artar)
-                if (currentDistance <= 25 && Math.random() < (0.80 - (currentDistance * 0.025))) {
-                    const isGoal = Math.random() < (0.75 - (currentDistance * 0.02));
-                    
-                    if (isGoal) {
-                        if (currentPossession.id === team1Role.id) score1++;
-                        else score2++;
+                const matchMsg = await message.channel.send({ embeds: [embed] });
 
-                        let scorerMention = currentCarrier.user_id ? `<@${currentCarrier.user_id}>` : currentCarrier.nickname;
-                        let assistText = '';
+                let minute = 1;
 
-                        if (lastPasser && lastPasser.user_id && lastPasser.user_id !== currentCarrier.user_id) {
-                            assistText = ` (Asist: <@${lastPasser.user_id}>)`;
-                            db.run(`UPDATE players SET assists = assists + 1 WHERE user_id = ?`, [lastPasser.user_id]);
-                        }
+                const interval = setInterval(async () => {
+                    if (minute > 90) {
+                        clearInterval(interval);
 
-                        if (currentCarrier.user_id) {
-                            db.run(`UPDATE players SET goals = goals + 1 WHERE user_id = ?`, [currentCarrier.user_id]);
-                        }
+                        const finalEmbed = new EmbedBuilder()
+                            .setTitle(`🏁 MAÇ BİTTİ | ${team1Role.name} ${score1} - ${score2} ${team2Role.name}`)
+                            .setColor('#00ff00')
+                            .addFields(
+                                { name: '📊 Efektif Kadro Değerleri (Taktikli)', value: `**${team1Role.name}:** ${val1}M (${tac1})\n**${team2Role.name}:** ${val2}M (${tac2})` },
+                                { name: '⚽ Goller ve Asistler', value: scorers.length > 0 ? scorers.join('\n') : 'Gol olmadı.' }
+                            )
+                            .setFooter({ text: isOfficial ? 'Resmi Lig Maçı İşlendi' : 'Hazırlık Maçı' })
+                            .setTimestamp();
 
-                        actionText = `⚽ **GOOOOL!** **${currentCarrier.nickname}** **${currentDistance}m** mesafeden harika vurdu ve topu ağlara gönderdi!${assistText}`;
-                        scorers.push(`⏱️ ${minute}' **${currentCarrier.nickname}**${lastPasser ? ' (' + lastPasser.nickname + ')' : ''}`);
-
-                        // Santra
-                        currentPossession = (currentPossession.id === team1Role.id) ? team2Role : team1Role;
-                        currentDistance = 50;
-                        currentCarrier = null;
-                        lastPasser = null;
-                    } else {
-                        actionText = `💥 **${currentCarrier.nickname}** **${currentDistance}m** mesafeden sert vurdu! Top az farkla dışarı gitti!`;
-                        currentDistance = 45;
+                        await matchMsg.edit({ embeds: [finalEmbed] });
+                        return resolve({ score1, score2, team1Players, team2Players });
                     }
-                }
 
-                matchLog.unshift(`**[${minute}']** ${actionText}`);
-                if (matchLog.length > 5) matchLog.pop();
+                    const currentTeamPlayers = (currentPossession.id === team1Role.id) ? team1Players : team2Players;
+                    
+                    if (!currentCarrier || Math.random() < 0.4) {
+                        lastPasser = currentCarrier;
+                        currentCarrier = getRandomPlayer(currentTeamPlayers);
+                    }
 
-                const liveEmbed = new EmbedBuilder()
-                    .setTitle(`🏟️ ${team1Role.name} ${score1} - ${score2} ${team2Role.name}`)
-                    .setColor('#f1c40f')
-                    .setDescription(`⏱️ **Dakika:** ${minute}'\n📍 **Topun Olduğu Takım:** ${currentPossession}\n👤 **Toptaki Oyuncu:** ${currentCarrier ? currentCarrier.nickname : 'Mücadele Var'}\n📏 **Kaleye Mesafe:** ${currentDistance} Metre\n\n**Olay Akışı:**\n${matchLog.join('\n')}`)
-                    .setFooter({ text: 'Canlı Maç Simülasyonu Devam Ediyor...' });
+                    let actionText = '';
 
-                await matchMsg.edit({ embeds: [liveEmbed] }).catch(() => {});
+                    const teamVal = (currentPossession.id === team1Role.id) ? val1 : val2;
+                    const oppVal = (currentPossession.id === team1Role.id) ? val2 : val1;
+                    const attackSuccessChance = 0.5 + ((teamVal - oppVal) * 0.01);
 
-                minute += Math.floor(Math.random() * 4) + 2; // Dakikaları 2-5'er hızlandırarak 90'a tamamlar
-            }, 1800);
+                    if (Math.random() < attackSuccessChance) {
+                        currentDistance -= Math.floor(Math.random() * 12) + 5;
+                        if (currentDistance < 8) currentDistance = 8;
+                        actionText = `🏃 **${currentCarrier.nickname}** topu ileriye taşıyor! Kaleye mesafe: **${currentDistance}m**`;
+                    } else {
+                        currentPossession = (currentPossession.id === team1Role.id) ? team2Role : team1Role;
+                        currentDistance = 60 - currentDistance;
+                        if (currentDistance < 20) currentDistance = 35;
+                        currentCarrier = getRandomPlayer((currentPossession.id === team1Role.id) ? team1Players : team2Players);
+                        lastPasser = null;
+                        actionText = `❌ Savunma araya girdi! Top **${currentPossession.name}** takımına geçti.`;
+                    }
+
+                    if (currentDistance <= 25 && Math.random() < (0.80 - (currentDistance * 0.025))) {
+                        const isGoal = Math.random() < (0.75 - (currentDistance * 0.02));
+                        
+                        if (isGoal) {
+                            if (currentPossession.id === team1Role.id) score1++;
+                            else score2++;
+
+                            let assistText = '';
+
+                            if (lastPasser && lastPasser.user_id && lastPasser.user_id !== currentCarrier.user_id) {
+                                assistText = ` (Asist: <@${lastPasser.user_id}>)`;
+                                db.run(`UPDATE players SET assists = assists + 1 WHERE user_id = ?`, [lastPasser.user_id]);
+                            }
+
+                            if (currentCarrier.user_id) {
+                                db.run(`UPDATE players SET goals = goals + 1 WHERE user_id = ?`, [currentCarrier.user_id]);
+                            }
+
+                            actionText = `⚽ **GOOOOL!** **${currentCarrier.nickname}** **${currentDistance}m** mesafeden harika vurdu ve topu ağlara gönderdi!${assistText}`;
+                            scorers.push(`⏱️ ${minute}' **${currentCarrier.nickname}**${lastPasser ? ' (' + lastPasser.nickname + ')' : ''}`);
+
+                            currentPossession = (currentPossession.id === team1Role.id) ? team2Role : team1Role;
+                            currentDistance = 50;
+                            currentCarrier = null;
+                            lastPasser = null;
+                        } else {
+                            actionText = `💥 **${currentCarrier.nickname}** **${currentDistance}m** mesafeden sert vurdu! Top az farkla dışarı gitti!`;
+                            currentDistance = 45;
+                        }
+                    }
+
+                    matchLog.unshift(`**[${minute}']** ${actionText}`);
+                    if (matchLog.length > 5) matchLog.pop();
+
+                    const liveEmbed = new EmbedBuilder()
+                        .setTitle(`🏟️ ${team1Role.name} ${score1} - ${score2} ${team2Role.name}`)
+                        .setColor('#f1c40f')
+                        .setDescription(`⏱️ **Dakika:** ${minute}'\n📍 **Topun Olduğu Takım:** ${currentPossession}\n👤 **Toptaki Oyuncu:** ${currentCarrier ? currentCarrier.nickname : 'Mücadele Var'}\n📏 **Kaleye Mesafe:** ${currentDistance} Metre\n\n**Olay Akışı:**\n${matchLog.join('\n')}`)
+                        .setFooter({ text: 'Canlı Maç Simülasyonu Devam Ediyor...' });
+
+                    await matchMsg.edit({ embeds: [liveEmbed] }).catch(() => {});
+
+                    minute += Math.floor(Math.random() * 4) + 2;
+                }, 1800);
+            });
         });
     });
 }
 
 client.on('ready', () => {
     console.log(`Bot ${client.user.tag} olarak aktif!`);
+});
+
+// ---------------- İNTERAKSİYON (BUTTON / SELECT MENU) YÖNETİCİSİ ----------------
+client.on('interactionCreate', async (interaction) => {
+    if (!interaction.isButton() && !interaction.isStringSelectMenu()) return;
+
+    const customId = interaction.customId;
+
+    // 1. TAKTİK MENÜSÜ BUTONU
+    if (customId.startsWith('tactic_menu_')) {
+        const teamRoleId = customId.replace('tactic_menu_', '');
+
+        const tacticEmbed = new EmbedBuilder()
+            .setTitle('🧠 TAKTİK SEÇİMİ (FC 26 TAŞ-KAĞIT-MAKAS)')
+            .setColor('#f39c12')
+            .setDescription(
+                'Takımınız için bir taktik seçin. Taktikler canlı maç simülasyonunda güç üstünlüğü sağlar:\n\n' +
+                '• ⚡ **Baskı:** Tiki-Taka taktiğini ezer! (+%25 Değer Bonusu)\n' +
+                '• 🎯 **Tiki-Taka:** Otobüs Çek taktiğini ezer! (+%25 Değer Bonusu)\n' +
+                '• 🛡️ **Otobüs Çek:** Baskı taktiğini ezer! (+%25 Değer Bonusu)\n' +
+                '• ⚖️ **Dengeli:** Standart oyun planı.'
+            );
+
+        const selectMenu = new StringSelectMenuBuilder()
+            .setCustomId(`select_tactic_${teamRoleId}`)
+            .setPlaceholder('Bir taktik seçin...')
+            .addOptions([
+                { label: 'Baskı', description: 'Tiki-Taka ezer | Otobüse yenilir', value: 'Baskı', emoji: '⚡' },
+                { label: 'Tiki-Taka', description: 'Otobüs Çek ezer | Baskıya yenilir', value: 'Tiki-Taka', emoji: '🎯' },
+                { label: 'Otobüs Çek', description: 'Baskı ezer | Tiki-Taka yenilir', value: 'Otobüs Çek', emoji: '🛡️' },
+                { label: 'Dengeli', description: 'Bonus veya zayıflık içermez', value: 'Dengeli', emoji: '⚖️' }
+            ]);
+
+        const row = new ActionRowBuilder().addComponents(selectMenu);
+        return interaction.reply({ embeds: [tacticEmbed], components: [row], ephemeral: true });
+    }
+
+    if (customId.startsWith('select_tactic_')) {
+        const teamRoleId = customId.replace('select_tactic_', '');
+        const selectedTactic = interaction.values[0];
+
+        db.run(`UPDATE teams SET tactic = ? WHERE role_id = ?`, [selectedTactic, teamRoleId], (err) => {
+            if (err) return interaction.reply({ content: 'Taktik güncellenemedi.', ephemeral: true });
+            interaction.reply({ content: `✅ Takımınızın yeni taktiği **${selectedTactic}** olarak belirlendi!`, ephemeral: true });
+        });
+    }
+
+    // 2. DİZİLİŞ MENÜSÜ BUTONU
+    if (customId.startsWith('formation_menu_')) {
+        const teamRoleId = customId.replace('formation_menu_', '');
+
+        const formationEmbed = new EmbedBuilder()
+            .setTitle('📐 DİZİLİŞ SEÇİMİ')
+            .setColor('#3498db')
+            .setDescription('Aşağıdaki popüler 6 dizilişten birini seçin:');
+
+        const selectMenu = new StringSelectMenuBuilder()
+            .setCustomId(`select_formation_${teamRoleId}`)
+            .setPlaceholder('Bir diziliş seçin...')
+            .addOptions([
+                { label: '4-3-3', description: 'Hücum ağırlıklı dengeli diziliş', value: '4-3-3' },
+                { label: '4-4-2', description: 'Klasik çift santrafor dizilişi', value: '4-4-2' },
+                { label: '4-2-3-1', description: 'Tek santrafor ve arkasında 3\'lü hücum hattı', value: '4-2-3-1' },
+                { label: '3-5-2', description: 'Orta saha kalabalık, çift forvet', value: '3-5-2' },
+                { label: '5-3-2', description: 'Defansif, hızlı hücum dizilişi', value: '5-3-2' },
+                { label: '4-1-2-1-2', description: 'Dar baklava orta saha dizilişi', value: '4-1-2-1-2' }
+            ]);
+
+        const row = new ActionRowBuilder().addComponents(selectMenu);
+        return interaction.reply({ embeds: [formationEmbed], components: [row], ephemeral: true });
+    }
+
+    if (customId.startsWith('select_formation_')) {
+        const teamRoleId = customId.replace('select_formation_', '');
+        const selectedFormation = interaction.values[0];
+
+        db.run(`UPDATE teams SET formation = ? WHERE role_id = ?`, [selectedFormation, teamRoleId], (err) => {
+            if (err) return interaction.reply({ content: 'Diziliş güncellenemedi.', ephemeral: true });
+            interaction.reply({ content: `✅ Takımın yeni dizilişi **${selectedFormation}** yapıldı! \`.kadro\` atarak kontrol edebilirsiniz.`, ephemeral: true });
+        });
+    }
+
+    // 3. İLK 11 KADRO DÜZENLEME BUTONU
+    if (customId.startsWith('lineup_menu_')) {
+        const teamRoleId = customId.replace('lineup_menu_', '');
+
+        db.get(`SELECT * FROM teams WHERE role_id = ?`, [teamRoleId], (err, teamRow) => {
+            if (!teamRow) return interaction.reply({ content: 'Takım verisi bulunamadı.', ephemeral: true });
+
+            const formation = teamRow.formation || '4-3-3';
+            const positions = FORMATIONS[formation] || FORMATIONS['4-3-3'];
+            let XI = {};
+            try { XI = JSON.parse(teamRow.starting_11 || '{}'); } catch(e) {}
+
+            const pitchGraphic = generatePitchGraphic(formation, XI);
+
+            let buttons = [];
+            let counts = {};
+
+            positions.forEach((pos) => {
+                counts[pos] = (counts[pos] || 0) + 1;
+                const posIndex = counts[pos];
+                const key = `${pos}_${posIndex}`;
+                const playerName = XI[key] ? XI[key].substring(0, 8) : pos;
+
+                buttons.push(
+                    new ButtonBuilder()
+                        .setCustomId(`pos_select_${teamRoleId}_${key}`)
+                        .setLabel(playerName)
+                        .setStyle(XI[key] ? ButtonStyle.Success : ButtonStyle.Primary)
+                );
+            });
+
+            // Butonları en fazla 5'erli ActionRow'lar halinde böl
+            const rows = [];
+            for (let i = 0; i < buttons.length; i += 5) {
+                rows.push(new ActionRowBuilder().addComponents(buttons.slice(i, i + 5)));
+            }
+
+            const lineupEmbed = new EmbedBuilder()
+                .setTitle(`📋 İLK 11 AYARLAMA (${formation})`)
+                .setColor('#2ecc71')
+                .setDescription(`Saha üzerindeki yerleşim aşağıdadır. Değiştirmek istediğiniz pozisyona tıklayıp listeden oyuncu seçin:\n\n${pitchGraphic}`);
+
+            interaction.reply({ embeds: [lineupEmbed], components: rows, ephemeral: true });
+        });
+    }
+
+    // 4. POZİSYON İÇİN OYUNCU SEÇME
+    if (customId.startsWith('pos_select_')) {
+        const parts = customId.split('_');
+        const teamRoleId = parts[2];
+        const posKey = `${parts[3]}_${parts[4]}`; // Örn: SNT_1
+
+        db.all(`SELECT * FROM players WHERE team_id = ?`, [teamRoleId], (err, players) => {
+            if (!players || players.length === 0) {
+                return interaction.reply({ content: '❌ Takımınızda kayıtlı oyuncu yok! Önce `.kadroekle` ile ekleyin.', ephemeral: true });
+            }
+
+            const options = players.map(p => ({
+                label: p.nickname.substring(0, 25),
+                description: `Değer: ${p.value}M | Pozisyon: ${p.position}`,
+                value: p.nickname
+            }));
+
+            const selectMenu = new StringSelectMenuBuilder()
+                .setCustomId(`assign_player_${teamRoleId}_${posKey}`)
+                .setPlaceholder(`${parts[3]} pozisyonu için oyuncu seçin...`)
+                .addOptions(options);
+
+            const row = new ActionRowBuilder().addComponents(selectMenu);
+            interaction.reply({ content: `👉 **${parts[3]}** pozisyonuna yerleştirmek istediğiniz oyuncuyu seçin:`, components: [row], ephemeral: true });
+        });
+    }
+
+    // 5. OYUNCUYU İLK 11 POZİSYONUNA KAYDETME
+    if (customId.startsWith('assign_player_')) {
+        const parts = customId.split('_');
+        const teamRoleId = parts[2];
+        const posKey = `${parts[3]}_${parts[4]}`;
+        const selectedPlayerName = interaction.values[0];
+
+        db.get(`SELECT starting_11 FROM teams WHERE role_id = ?`, [teamRoleId], (err, row) => {
+            let XI = {};
+            try { XI = JSON.parse(row?.starting_11 || '{}'); } catch(e) {}
+
+            XI[posKey] = selectedPlayerName;
+
+            db.run(`UPDATE teams SET starting_11 = ? WHERE role_id = ?`, [JSON.stringify(XI), teamRoleId], (err) => {
+                if (err) return interaction.reply({ content: 'Oyuncu atanamadı.', ephemeral: true });
+                interaction.reply({ content: `✅ **${selectedPlayerName}** oyuncusu **${parts[3]}** pozisyonuna yerleştirildi! Sayfayı yenilemek için **Kadro** butonuna tekrar basabilirsiniz.`, ephemeral: true });
+            });
+        });
+    }
 });
 
 client.on('messageCreate', async (message) => {
@@ -404,27 +692,57 @@ client.on('messageCreate', async (message) => {
         });
     }
 
-    // ---------------- KADRO (.kadro) ----------------
+    // ---------------- KADRO VE BUTONLAR (.kadro) ----------------
     if (command === 'kadro') {
         const role = message.mentions.roles.first();
         if (!role) return message.channel.send('❌ **Kullanım:** `.kadro @Takım`');
 
-        db.all(`SELECT * FROM players WHERE team_id = ?`, [role.id], (err, rows) => {
-            if (err) return console.error(err);
+        db.get(`SELECT * FROM teams WHERE role_id = ?`, [role.id], (err, teamRow) => {
+            db.all(`SELECT * FROM players WHERE team_id = ?`, [role.id], (err, rows) => {
+                if (err) return console.error(err);
 
-            const embed = new EmbedBuilder()
-                .setTitle(`🛡️ ${role.name.toUpperCase()} KADROSU`)
-                .setColor('#2b2d31');
+                const formation = teamRow ? teamRow.formation : '4-3-3';
+                const tactic = teamRow ? teamRow.tactic : 'Dengeli';
 
-            if (!rows || rows.length === 0) {
-                embed.setDescription('Bu takımda kayıtlı oyuncu bulunamadı.');
-            } else {
-                let totalVal = rows.reduce((acc, p) => acc + p.value, 0);
-                let kadroMetni = rows.map(p => `<@${p.user_id}> - **Pozisyon:** ${p.position} - **Değer:** ${p.value}M - ⚽ ${p.goals || 0}G / 🅰️ ${p.assists || 0}A`).join('\n');
-                embed.setDescription(`💰 **Kadro Değeri:** ${totalVal}M\n\n` + kadroMetni);
-            }
+                const embed = new EmbedBuilder()
+                    .setTitle(`🛡️ ${role.name.toUpperCase()} KADROSU`)
+                    .setColor('#2b2d31')
+                    .addFields(
+                        { name: '📐 Diziliş', value: formation, inline: true },
+                        { name: '🧠 Taktik', value: tactic, inline: true }
+                    );
 
-            message.channel.send({ embeds: [embed] });
+                if (!rows || rows.length === 0) {
+                    embed.setDescription('Bu takımda kayıtlı oyuncu bulunamadı.');
+                } else {
+                    let totalVal = rows.reduce((acc, p) => acc + p.value, 0);
+                    let kadroMetni = rows.map(p => `<@${p.user_id}> - **Pozisyon:** ${p.position} - **Değer:** ${p.value}M - ⚽ ${p.goals || 0}G / 🅰️ ${p.assists || 0}A`).join('\n');
+                    embed.setDescription(`💰 **Kadro Değeri:** ${totalVal}M\n\n` + kadroMetni);
+                }
+
+                // Taktik, Diziliş ve Kadro Yapılandırma Butonları
+                const btnTactic = new ButtonBuilder()
+                    .setCustomId(`tactic_menu_${role.id}`)
+                    .setLabel('Taktik')
+                    .setStyle(ButtonStyle.Primary)
+                    .setEmoji('🧠');
+
+                const btnFormation = new ButtonBuilder()
+                    .setCustomId(`formation_menu_${role.id}`)
+                    .setLabel('Diziliş')
+                    .setStyle(ButtonStyle.Secondary)
+                    .setEmoji('📐');
+
+                const btnLineup = new ButtonBuilder()
+                    .setCustomId(`lineup_menu_${role.id}`)
+                    .setLabel('Kadro (İlk 11)')
+                    .setStyle(ButtonStyle.Success)
+                    .setEmoji('📋');
+
+                const row = new ActionRowBuilder().addComponents(btnTactic, btnFormation, btnLineup);
+
+                message.channel.send({ embeds: [embed], components: [row] });
+            });
         });
     }
 
@@ -624,4 +942,3 @@ client.on('messageCreate', async (message) => {
 });
 
 client.login(TOKEN);
-
