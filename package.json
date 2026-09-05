@@ -6,7 +6,7 @@
     "start": "node index.js"
   },
   "dependencies": {
-    "@napi-rs/canvas": "^0.14.0",
+    "@napi-rs/canvas": "^0.1.65",
     "discord.js": "^14.14.1",
     "sqlite3": "^5.1.7"
   },
